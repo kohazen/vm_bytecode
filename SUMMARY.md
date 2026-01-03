@@ -1,291 +1,306 @@
-# Day 1: Basic VM Structure + Stack Operations
+# Day 1: Lexer (Tokenizer)
 
 ## What We Built Today
 
-Today we created the foundation of our bytecode virtual machine (VM). We implemented:
-1. The core VM data structure that holds all the state
-2. Basic stack operations (push, pop, peek)
-3. Four instructions: PUSH, POP, DUP, and HALT
-4. Error handling for stack overflow and underflow
+Today we created the **lexer** (also called a tokenizer) - the first stage of our assembler. The lexer reads assembly source code as raw text and breaks it into **tokens** - the smallest meaningful pieces like instructions, numbers, and labels.
 
-By the end of today, we have a working VM that can run simple programs that push numbers onto a stack, duplicate them, and pop them off.
+This is exactly how real compilers and assemblers work: first tokenize, then parse, then generate code.
 
 ---
 
 ## Key Concepts Explained
 
-### What is a Virtual Machine?
+### 1. What is a Lexer?
 
-A **virtual machine (VM)** is a program that pretends to be a computer. Instead of running on real hardware, it executes instructions in software. Think of it like a game emulator - the emulator reads game instructions and executes them, even though your computer isn't the original game console.
+A lexer (lexical analyzer) converts raw text into tokens. Think of it like breaking a sentence into words:
 
-Our VM is a **bytecode VM**, which means it runs programs that have been converted into a sequence of bytes (numbers). Each number represents an instruction.
+**Raw text**: `"PUSH 42  ; add value"`
 
-### What is a Stack?
+**Tokens**:
+1. INSTRUCTION: "PUSH"
+2. NUMBER: "42" (value: 42)
+3. NEWLINE
 
-A **stack** is a data structure that works like a stack of plates:
-- **Push**: Put a new plate on top
-- **Pop**: Take the top plate off
-- **Peek**: Look at the top plate without removing it
+The comment `; add value` is ignored - it's not meaningful for the assembler.
 
-This is called **LIFO** - Last In, First Out. The last thing you put on is the first thing you take off.
+### 2. Token Types
 
-```
-Stack visualization:
+Our lexer recognizes these token types:
 
-    PUSH 10     PUSH 20     POP
+| Type | Example | Description |
+|------|---------|-------------|
+| TOKEN_INSTRUCTION | PUSH, ADD, HALT | An assembly instruction |
+| TOKEN_NUMBER | 42, -7, 0 | A numeric value |
+| TOKEN_LABEL_DEF | loop: | A label definition (note the colon) |
+| TOKEN_LABEL_REF | loop | A reference to a label |
+| TOKEN_NEWLINE | (end of line) | Separates instructions |
+| TOKEN_EOF | (end of file) | Marks end of input |
+| TOKEN_ERROR | | Something went wrong |
 
-    +----+      +----+      +----+
-    | 10 |  ->  | 20 |  ->  | 10 |
-    +----+      +----+      +----+
-                | 10 |
-                +----+
-```
+### 3. How Tokenization Works
 
-### Stack Pointer (SP)
-
-The **stack pointer** is a number that tells us where the top of the stack is. When we:
-- **Push**: Put value at SP, then increase SP by 1
-- **Pop**: Decrease SP by 1, then read value at SP
+The lexer uses a simple state machine:
 
 ```
-Initial:    SP = 0  (stack is empty)
-PUSH 10:    stack[0] = 10, SP = 1
-PUSH 20:    stack[1] = 20, SP = 2
-POP:        SP = 1, return stack[1] = 20
+1. Skip whitespace (spaces, tabs)
+2. Look at current character
+3. Based on what it is:
+   - ';' → Skip rest of line (comment)
+   - '\n' → Emit NEWLINE token
+   - Digit or '-' → Read number
+   - Letter → Read identifier (instruction or label)
+   - Other → Error
+4. Repeat until end of file
 ```
 
-### Why Do We Need Overflow/Underflow Checks?
+### 4. Why Separate Lexing from Parsing?
 
-**Stack Overflow**: Trying to push when the stack is full. This could corrupt other memory.
+We could try to do everything in one pass, but separating has advantages:
 
-**Stack Underflow**: Trying to pop when the stack is empty. This would read garbage data.
+1. **Simpler code**: Each stage does one thing well
+2. **Better errors**: "Unknown character '#'" vs "Parse error"
+3. **Reusable**: Same lexer could work with different parsers
+4. **Easier testing**: Can test lexer independently
 
-Our VM checks for these and stops with an error instead of crashing or giving wrong results.
+This is the classic "separation of concerns" principle.
+
+### 5. Handling Different Input
+
+The lexer handles various input patterns:
+
+**Comments**: Start with `;`, continue to end of line
+```asm
+PUSH 42  ; this is ignored
+```
+
+**Labels**: End with `:`
+```asm
+loop:    ; defines label "loop"
+JMP loop ; references label "loop"
+```
+
+**Numbers**: Digits, optionally starting with `-`
+```asm
+PUSH 42
+PUSH -7
+```
+
+**Whitespace**: Spaces and tabs between tokens are ignored
+```asm
+   PUSH   42   ; all the same as "PUSH 42"
+```
 
 ---
 
 ## How the Code Works
 
-### The VM Structure (vm.h)
+### lexer.h
+
+Defines the structures we need:
 
 ```c
+typedef enum {
+    TOKEN_INSTRUCTION,
+    TOKEN_NUMBER,
+    TOKEN_LABEL_DEF,
+    TOKEN_LABEL_REF,
+    TOKEN_NEWLINE,
+    TOKEN_EOF,
+    TOKEN_ERROR
+} TokenType;
+
 typedef struct {
-    int32_t *stack;      // Array to hold stack values
-    int sp;              // Stack Pointer - index of next free slot
-    int32_t *memory;     // Global memory (for later)
-    uint8_t *code;       // The bytecode program
-    int code_size;       // How many bytes in the program
-    int pc;              // Program Counter - which byte to read next
-    bool running;        // Is the VM still running?
-    VMError error;       // What went wrong (if anything)
-} VM;
+    TokenType type;              // What kind of token
+    char text[MAX_TOKEN_LENGTH]; // The actual text
+    int32_t value;               // Numeric value (for numbers)
+    int line;                    // Line number (for errors)
+} Token;
 ```
 
-### Creating the VM (vm.c: vm_create)
+### lexer.c
 
-1. Allocate memory for the VM structure
-2. Allocate arrays for stack, memory, and return stack
-3. Set everything to zero/empty
-4. Return the new VM
+The main function is `lexer_tokenize()`:
 
-### Running a Program (vm.c: vm_run)
+```c
+bool lexer_tokenize(Lexer *lexer) {
+    while (!is_at_end(lexer)) {
+        skip_whitespace(lexer);
 
-The VM runs a **fetch-decode-execute loop**:
+        char c = peek(lexer);
 
-```
-while (running) {
-    1. FETCH:  Read the byte at position PC (this is the opcode)
-    2. DECODE: Figure out which instruction it is
-    3. EXECUTE: Do what that instruction says
-    4. Repeat
+        if (c == ';') {
+            skip_comment(lexer);
+        }
+        else if (c == '\n') {
+            add_token(lexer, TOKEN_NEWLINE, "\\n", 0);
+            lexer->line++;
+        }
+        else if (is_digit(c) || c == '-') {
+            read_number(lexer);
+        }
+        else if (is_alpha(c)) {
+            read_identifier(lexer);
+        }
+        else {
+            // Error: unexpected character
+        }
+    }
+
+    add_token(lexer, TOKEN_EOF, "EOF", 0);
+    return true;
 }
 ```
 
-### PUSH Instruction
+Key helper functions:
 
-**Opcode**: 0x01
-**Format**: 1 byte opcode + 4 bytes value (5 bytes total)
-
-```
-PUSH 42 in bytecode:  01 2A 00 00 00
-                      ^  ^^^^^^^^^
-                      |  |
-                      |  +-- 42 in little-endian (least significant byte first)
-                      +-- opcode for PUSH
-```
-
-**What it does**:
-1. Read the 4-byte value after the opcode
-2. Put that value on top of the stack
-3. Move to the next instruction
-
-### POP Instruction
-
-**Opcode**: 0x02
-**Format**: 1 byte (just the opcode)
-
-**What it does**:
-1. Remove the top value from the stack
-2. (We don't do anything with the value - it's just discarded)
-
-### DUP Instruction
-
-**Opcode**: 0x03
-**Format**: 1 byte (just the opcode)
-
-**What it does**:
-1. Look at the top value (peek)
-2. Push that same value again
-3. Now we have two copies of the value on the stack
-
-### HALT Instruction
-
-**Opcode**: 0xFF
-**Format**: 1 byte (just the opcode)
-
-**What it does**:
-1. Set running = false
-2. The main loop stops
-3. The program ends
+- `peek()` - Look at current character without consuming it
+- `advance()` - Get current character and move to next
+- `skip_whitespace()` - Skip spaces and tabs
+- `skip_comment()` - Skip from `;` to end of line
+- `read_number()` - Read a numeric token
+- `read_identifier()` - Read an instruction or label
 
 ---
 
-## How to Test It
+## How to Test
 
-### Building
-
+### Compile
 ```bash
-cd student1/day1
+make clean
 make
 ```
 
-This compiles the code and creates `vm_test`.
-
-### Running
-
+### Run Tests
 ```bash
-./vm_test
+./lexer_test
 ```
 
-Or use the Makefile:
-
+Or simply:
 ```bash
-make run
-```
-
-### Expected Output
-
-```
-========================================
-  Virtual Machine - Day 1 Tests
-  Testing: PUSH, POP, DUP, HALT
-========================================
-
-=== Test 1: PUSH and HALT ===
-Program: PUSH 42, HALT
-Expected: Stack = [42]
-=== VM State ===
-PC: 6
-SP: 1
-Running: no
-Error: OK
-Stack: [42]
-Top of stack: 42
-================
-TEST PASSED!
-
-=== Test 2: Multiple PUSH ===
-Program: PUSH 10, PUSH 20, PUSH 30, HALT
-Expected: Stack = [10, 20, 30]
-=== VM State ===
-PC: 16
-SP: 3
-Running: no
-Error: OK
-Stack: [10, 20, 30]
-Top of stack: 30
-================
-TEST PASSED!
-
-... (more tests) ...
-
-========================================
-  All tests completed!
-========================================
-```
-
-### Cleaning Up
-
-```bash
-make clean
+make test
 ```
 
 ---
 
-## What to Expect
-
-When you run the tests, you should see:
-- **6 tests** run
-- Each test shows what the program does
-- The VM state after running (PC, SP, Stack contents)
-- "TEST PASSED!" for each test
-
-If any test fails, check:
-1. Did the code compile without errors?
-2. Are all files in the same directory?
-3. Look at the stack contents - do they match expected?
-
----
-
-## Common Mistakes
-
-### 1. Forgetting Little-Endian Byte Order
-
-When writing numbers in bytecode, the **least significant byte comes first**.
+## Expected Output
 
 ```
-42 in decimal = 0x0000002A in hex
-In bytecode:   2A 00 00 00  (NOT 00 00 00 2A)
+========================================
+  Assembler Lexer - Day 1 Tests
+========================================
+
+=== Test: Simple program ===
+Source:
+PUSH 42
+PUSH 8
+ADD
+HALT
+
+=== Tokens (9 total) ===
+[  0] Line  1: INSTRUCTION     'PUSH'
+[  1] Line  1: NUMBER          '42' (value: 42)
+[  2] Line  1: NEWLINE         '\n'
+[  3] Line  2: INSTRUCTION     'PUSH'
+[  4] Line  2: NUMBER          '8' (value: 8)
+[  5] Line  2: NEWLINE         '\n'
+[  6] Line  3: INSTRUCTION     'ADD'
+[  7] Line  3: NEWLINE         '\n'
+[  8] Line  4: INSTRUCTION     'HALT'
+========================
+Tokenization successful!
+
+...
+
+=== Test: Labels ===
+Source:
+start:
+    PUSH 5
+    PUSH 1
+    SUB
+    DUP
+    JNZ start
+    HALT
+
+=== Tokens (15 total) ===
+[  0] Line  1: LABEL_DEF       'start'
+[  1] Line  1: NEWLINE         '\n'
+[  2] Line  2: INSTRUCTION     'PUSH'
+[  3] Line  2: NUMBER          '5' (value: 5)
+[  4] Line  2: NEWLINE         '\n'
+...
+========================
+Tokenization successful!
 ```
 
-### 2. Off-by-One Errors in Stack Pointer
+---
 
-The stack pointer points to the **next free slot**, not the top element.
-- To read the top: use `stack[sp - 1]`
-- To push: use `stack[sp]`, then increment sp
+## Common Mistakes and How to Avoid Them
 
-### 3. Forgetting to Move PC
+### 1. Forgetting to Handle Negative Numbers
+```c
+// WRONG - doesn't handle "-42"
+if (is_digit(c)) {
+    read_number(lexer);
+}
 
-After reading an instruction, PC must advance:
-- No-operand instructions: PC += 1
-- Instructions with 4-byte operand: PC += 5 (already done in our code by advancing after opcode and after reading operand)
+// CORRECT - check for minus sign too
+if (is_digit(c) || (c == '-' && is_digit(next_char))) {
+    read_number(lexer);
+}
+```
 
-### 4. Not Checking for Errors
+### 2. Not Tracking Line Numbers
+Line numbers are crucial for error messages. Always increment `lexer->line` when you see a newline:
+```c
+if (c == '\n') {
+    lexer->line++;
+}
+```
 
-Every stack operation can fail. Always check if an error occurred before continuing.
+### 3. Buffer Overflows
+Always check length before copying strings:
+```c
+if (length >= MAX_TOKEN_LENGTH) {
+    // Error: identifier too long
+}
+strncpy(token->text, source, length);
+token->text[length] = '\0';  // Always null-terminate!
+```
+
+### 4. Not Null-Terminating Strings
+C strings must end with `\0`. Always add it explicitly:
+```c
+strncpy(text, source, length);
+text[length] = '\0';  // IMPORTANT!
+```
 
 ---
 
-## Files in This Day
+## What's Next?
 
-| File | Purpose |
-|------|---------|
-| `instructions.h` | Defines opcode numbers (shared with assembler) |
-| `vm.h` | VM structure and function declarations |
-| `vm.c` | VM implementation (stack ops, instructions) |
-| `main.c` | Test harness with example programs |
-| `Makefile` | Build instructions |
-| `SUMMARY.md` | This explanation file |
+Tomorrow (Day 2) we'll build the **parser** which takes our tokens and:
+1. Validates the syntax (is "PUSH 42" valid? is "PUSH PUSH" invalid?)
+2. Looks up instruction opcodes
+3. Distinguishes between label definitions and label references
 
 ---
 
-## What's Next (Day 2)
+## Files Created Today
 
-Tomorrow we'll add arithmetic operations:
-- ADD: Add two numbers
-- SUB: Subtract
-- MUL: Multiply
-- DIV: Divide
-- CMP: Compare two numbers
+| File | Lines | Purpose |
+|------|-------|---------|
+| `instructions.h` | ~60 | Shared opcode definitions |
+| `lexer.h` | ~80 | Token types and structures |
+| `lexer.c` | ~190 | Tokenization implementation |
+| `main.c` | ~100 | Test program |
+| `Makefile` | ~30 | Build configuration |
 
-These will let us do calculations, not just move numbers around!
+---
+
+## Key Takeaways
+
+1. **Lexers break text into tokens** - the first step in any language processor
+2. **Each token has a type and value** - both are important
+3. **Line numbers help users** - always track them for error messages
+4. **Comments are whitespace** - just skip them during tokenization
+5. **Simple is better** - our lexer is about 200 lines and handles everything we need
