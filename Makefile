@@ -1,37 +1,37 @@
-# Makefile for VM Day 1
-# Builds the virtual machine test program
+# Makefile for Day 1 - Lexer
+#
+# Compiles the lexer test program.
 
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -Wall -Wextra -g -std=c99
 
-# Target executable
-TARGET = vm_test
+# Object files
+OBJECTS = main.o lexer.o
 
-# Source files
-SRCS = main.c vm.c
-OBJS = $(SRCS:.c=.o)
+# Executable
+TARGET = lexer_test
 
 # Default target
 all: $(TARGET)
 
-# Link object files to create executable
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+# Link
+$(TARGET): $(OBJECTS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
 
-# Compile source files to object files
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+# Compile main.c
+main.o: main.c lexer.h
+	$(CC) $(CFLAGS) -c main.c
 
-# Run the tests
-run: $(TARGET)
+# Compile lexer.c
+lexer.o: lexer.c lexer.h
+	$(CC) $(CFLAGS) -c lexer.c
+
+# Clean up
+clean:
+	rm -f $(OBJECTS) $(TARGET)
+
+# Run tests
+test: $(TARGET)
 	./$(TARGET)
 
-# Clean up build files
-clean:
-	rm -f $(OBJS) $(TARGET)
-
-# Dependencies
-main.o: main.c vm.h instructions.h
-vm.o: vm.c vm.h instructions.h
-
-.PHONY: all run clean
+.PHONY: all clean test
