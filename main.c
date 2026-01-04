@@ -1,77 +1,61 @@
 /*
- * main.c - Lexer Test Program
+ * main.c - Parser Test Program
  *
- * Day 1: Test the lexer with sample assembly code.
+ * Day 2: Test the parser with sample assembly code.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "lexer.h"
+#include "parser.h"
 
 /*
- * Test the lexer with a sample program.
+ * Test the lexer and parser with a sample program.
  */
-static void test_lexer(const char *name, const char *source) {
+static void test_program(const char *name, const char *source) {
     printf("\n=== Test: %s ===\n", name);
     printf("Source:\n%s\n", source);
-    printf("\n");
 
+    /* Step 1: Tokenize */
     Lexer lexer;
     lexer_init(&lexer, source);
 
-    if (lexer_tokenize(&lexer)) {
-        lexer_print_tokens(&lexer);
-        printf("Tokenization successful!\n");
-    } else {
-        printf("Tokenization failed: %s\n", lexer.error_msg);
+    if (!lexer_tokenize(&lexer)) {
+        printf("Lexer error: %s\n", lexer.error_msg);
+        return;
     }
+
+    printf("\nTokens: %d\n", lexer.token_count);
+
+    /* Step 2: Parse */
+    Parser parser;
+    parser_init(&parser, lexer.tokens, lexer.token_count);
+
+    if (!parser_parse(&parser)) {
+        printf("Parser error: %s\n", parser.error_msg);
+        return;
+    }
+
+    parser_print_instructions(&parser);
+    printf("Parsing successful!\n");
 }
 
 int main(void) {
     printf("========================================\n");
-    printf("  Assembler Lexer - Day 1 Tests\n");
+    printf("  Assembler Parser - Day 2 Tests\n");
     printf("========================================\n");
 
-    /* Test 1: Simple program */
-    test_lexer("Simple program",
-        "PUSH 42\n"
-        "PUSH 8\n"
-        "ADD\n"
-        "HALT\n"
-    );
-
-    /* Test 2: Program with comments */
-    test_lexer("Comments",
-        "; This is a comment\n"
-        "PUSH 10    ; push first value\n"
-        "PUSH 20    ; push second value\n"
-        "ADD        ; add them\n"
-        "HALT\n"
-    );
-
-    /* Test 3: Program with labels */
-    test_lexer("Labels",
-        "start:\n"
-        "    PUSH 5\n"
-        "    PUSH 1\n"
-        "    SUB\n"
-        "    DUP\n"
-        "    JNZ start\n"
-        "    HALT\n"
-    );
-
-    /* Test 4: Negative numbers */
-    test_lexer("Negative numbers",
-        "PUSH -42\n"
+    /* Test 1: Simple arithmetic */
+    test_program("Simple arithmetic",
         "PUSH 10\n"
+        "PUSH 20\n"
         "ADD\n"
         "HALT\n"
     );
 
-    /* Test 5: All instructions */
-    test_lexer("All instructions",
-        "PUSH 1\n"
+    /* Test 2: All instructions without operands */
+    test_program("No-operand instructions",
         "POP\n"
         "DUP\n"
         "ADD\n"
@@ -79,43 +63,100 @@ int main(void) {
         "MUL\n"
         "DIV\n"
         "CMP\n"
-        "JMP end\n"
-        "JZ skip\n"
-        "JNZ loop\n"
-        "STORE 0\n"
-        "LOAD 0\n"
-        "CALL func\n"
         "RET\n"
-        "end:\n"
-        "skip:\n"
-        "loop:\n"
-        "func:\n"
         "HALT\n"
     );
 
-    /* Test 6: Memory operations */
-    test_lexer("Memory operations",
-        "PUSH 100\n"
+    /* Test 3: All instructions with operands */
+    test_program("Operand instructions",
+        "PUSH 42\n"
         "STORE 0\n"
-        "PUSH 200\n"
-        "STORE 1\n"
-        "LOAD 0\n"
         "LOAD 1\n"
+        "JMP 0\n"
+        "JZ 0\n"
+        "JNZ 0\n"
+        "CALL 0\n"
+        "HALT\n"
+    );
+
+    /* Test 4: Negative numbers */
+    test_program("Negative numbers",
+        "PUSH -100\n"
+        "PUSH 50\n"
         "ADD\n"
         "HALT\n"
     );
 
-    /* Test 7: Empty lines and extra whitespace */
-    test_lexer("Whitespace handling",
-        "\n"
-        "   PUSH   42   \n"
-        "\n"
-        "   HALT   \n"
-        "\n"
+    /* Test 5: Labels (references only, resolution in Day 3) */
+    test_program("Label references",
+        "start:\n"
+        "    PUSH 5\n"
+        "    JNZ start\n"
+        "end:\n"
+        "    HALT\n"
     );
 
+    /* Test 6: Case insensitivity */
+    test_program("Case insensitivity",
+        "push 10\n"
+        "Push 20\n"
+        "PUSH 30\n"
+        "add\n"
+        "Add\n"
+        "halt\n"
+    );
+
+    /* Test 7: Comments and whitespace */
+    test_program("Comments and whitespace",
+        "; Program start\n"
+        "PUSH 100  ; first value\n"
+        "   PUSH 200   ; second value\n"
+        "ADD           ; add them\n"
+        "HALT          ; done\n"
+    );
+
+    /* Test 8: Error - missing operand */
+    printf("\n=== Test: Error - missing operand ===\n");
+    {
+        const char *source = "PUSH\n";
+        printf("Source:\n%s\n", source);
+
+        Lexer lexer;
+        lexer_init(&lexer, source);
+        lexer_tokenize(&lexer);
+
+        Parser parser;
+        parser_init(&parser, lexer.tokens, lexer.token_count);
+
+        if (!parser_parse(&parser)) {
+            printf("Expected error: %s\n", parser.error_msg);
+        } else {
+            printf("ERROR: Should have failed!\n");
+        }
+    }
+
+    /* Test 9: Error - unknown instruction */
+    printf("\n=== Test: Error - unknown instruction ===\n");
+    {
+        const char *source = "UNKNOWN 42\n";
+        printf("Source:\n%s\n", source);
+
+        Lexer lexer;
+        lexer_init(&lexer, source);
+        lexer_tokenize(&lexer);
+
+        Parser parser;
+        parser_init(&parser, lexer.tokens, lexer.token_count);
+
+        if (!parser_parse(&parser)) {
+            printf("Expected error: %s\n", parser.error_msg);
+        } else {
+            printf("ERROR: Should have failed!\n");
+        }
+    }
+
     printf("\n========================================\n");
-    printf("  All lexer tests completed!\n");
+    printf("  All parser tests completed!\n");
     printf("========================================\n");
 
     return 0;
