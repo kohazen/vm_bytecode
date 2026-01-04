@@ -1,7 +1,7 @@
 /*
  * vm.c - Virtual Machine Implementation
  *
- * Day 1: Basic VM structure with stack operations (PUSH, POP, DUP, HALT)
+ * Day 2: Added arithmetic operations (ADD, SUB, MUL, DIV, CMP)
  */
 
 #include <stdio.h>
@@ -19,13 +19,10 @@
  * Returns true if successful, false if stack overflow.
  */
 static bool stack_push(VM *vm, int32_t value) {
-    /* Check if there's room on the stack */
     if (vm->sp >= STACK_SIZE) {
         vm->error = VM_ERROR_STACK_OVERFLOW;
         return false;
     }
-
-    /* Put the value on top of the stack and move the pointer up */
     vm->stack[vm->sp] = value;
     vm->sp++;
     return true;
@@ -36,20 +33,16 @@ static bool stack_push(VM *vm, int32_t value) {
  * Returns the value, or 0 if stack underflow (sets error flag).
  */
 static int32_t stack_pop(VM *vm) {
-    /* Check if there's anything to pop */
     if (vm->sp <= 0) {
         vm->error = VM_ERROR_STACK_UNDERFLOW;
         return 0;
     }
-
-    /* Move the pointer down and return the value */
     vm->sp--;
     return vm->stack[vm->sp];
 }
 
 /*
  * Peek at the top value without removing it.
- * Returns the value, or 0 if stack is empty.
  */
 static int32_t stack_peek(VM *vm) {
     if (vm->sp <= 0) {
@@ -65,7 +58,7 @@ static int32_t stack_peek(VM *vm) {
 
 /*
  * Read a 32-bit integer from the bytecode at current PC.
- * Uses little-endian byte order (least significant byte first).
+ * Uses little-endian byte order.
  */
 static int32_t read_int32(VM *vm) {
     if (vm->pc + 4 > vm->code_size) {
@@ -73,7 +66,6 @@ static int32_t read_int32(VM *vm) {
         return 0;
     }
 
-    /* Read 4 bytes in little-endian order */
     int32_t value = (int32_t)vm->code[vm->pc] |
                     ((int32_t)vm->code[vm->pc + 1] << 8) |
                     ((int32_t)vm->code[vm->pc + 2] << 16) |
@@ -86,23 +78,16 @@ static int32_t read_int32(VM *vm) {
  * VM LIFECYCLE FUNCTIONS
  * ============================================ */
 
-/*
- * Create a new virtual machine.
- * Allocates memory for all the components.
- */
 VM* vm_create(void) {
-    /* Allocate the VM structure */
     VM *vm = (VM*)malloc(sizeof(VM));
     if (!vm) return NULL;
 
-    /* Allocate the data stack */
     vm->stack = (int32_t*)malloc(STACK_SIZE * sizeof(int32_t));
     if (!vm->stack) {
         free(vm);
         return NULL;
     }
 
-    /* Allocate global memory */
     vm->memory = (int32_t*)malloc(MEMORY_SIZE * sizeof(int32_t));
     if (!vm->memory) {
         free(vm->stack);
@@ -110,7 +95,6 @@ VM* vm_create(void) {
         return NULL;
     }
 
-    /* Allocate return stack (for function calls - we'll use this later) */
     vm->return_stack = (int32_t*)malloc(RETURN_STACK_SIZE * sizeof(int32_t));
     if (!vm->return_stack) {
         free(vm->memory);
@@ -119,15 +103,14 @@ VM* vm_create(void) {
         return NULL;
     }
 
-    /* Initialize everything to zero/empty */
     memset(vm->stack, 0, STACK_SIZE * sizeof(int32_t));
     memset(vm->memory, 0, MEMORY_SIZE * sizeof(int32_t));
     memset(vm->return_stack, 0, RETURN_STACK_SIZE * sizeof(int32_t));
 
-    vm->sp = 0;              /* Stack is empty */
-    vm->rsp = 0;             /* Return stack is empty */
-    vm->pc = 0;              /* Start at first instruction */
-    vm->code = NULL;         /* No program loaded yet */
+    vm->sp = 0;
+    vm->rsp = 0;
+    vm->pc = 0;
+    vm->code = NULL;
     vm->code_size = 0;
     vm->running = false;
     vm->error = VM_OK;
@@ -135,23 +118,15 @@ VM* vm_create(void) {
     return vm;
 }
 
-/*
- * Destroy the virtual machine and free all memory.
- */
 void vm_destroy(VM *vm) {
     if (vm) {
         if (vm->stack) free(vm->stack);
         if (vm->memory) free(vm->memory);
         if (vm->return_stack) free(vm->return_stack);
-        /* Note: We don't free vm->code because we didn't allocate it */
         free(vm);
     }
 }
 
-/*
- * Load a program into the VM.
- * The bytecode is not copied - we just point to it.
- */
 VMError vm_load_program(VM *vm, uint8_t *bytecode, int size) {
     vm->code = bytecode;
     vm->code_size = size;
@@ -167,28 +142,21 @@ VMError vm_load_program(VM *vm, uint8_t *bytecode, int size) {
  * INSTRUCTION EXECUTION
  * ============================================ */
 
-/*
- * Execute a single instruction.
- * This is the heart of the VM - the "fetch-decode-execute" cycle.
- */
 static void execute_instruction(VM *vm) {
-    /* Check bounds */
     if (vm->pc >= vm->code_size) {
         vm->error = VM_ERROR_CODE_BOUNDS;
         vm->running = false;
         return;
     }
 
-    /* Fetch the opcode */
     uint8_t opcode = vm->code[vm->pc];
-    vm->pc++;  /* Move to next byte (or operand) */
+    vm->pc++;
 
-    /* Decode and execute */
     switch (opcode) {
 
         /* ---- PUSH: Push a value onto the stack ---- */
         case OP_PUSH: {
-            int32_t value = read_int32(vm);  /* Read the 4-byte operand */
+            int32_t value = read_int32(vm);
             if (vm->error != VM_OK) {
                 vm->running = false;
                 return;
@@ -221,6 +189,91 @@ static void execute_instruction(VM *vm) {
             break;
         }
 
+        /* ============================================
+         * ARITHMETIC OPERATIONS (NEW IN DAY 2)
+         * ============================================ */
+
+        /* ---- ADD: Pop two values, push their sum ---- */
+        case OP_ADD: {
+            int32_t b = stack_pop(vm);  /* First pop = second operand */
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            int32_t a = stack_pop(vm);  /* Second pop = first operand */
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            if (!stack_push(vm, a + b)) {
+                vm->running = false;
+            }
+            break;
+        }
+
+        /* ---- SUB: Pop two values, push their difference ---- */
+        case OP_SUB: {
+            int32_t b = stack_pop(vm);  /* b is subtracted */
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            int32_t a = stack_pop(vm);  /* a is what we subtract from */
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            /* Result is a - b (NOT b - a!) */
+            if (!stack_push(vm, a - b)) {
+                vm->running = false;
+            }
+            break;
+        }
+
+        /* ---- MUL: Pop two values, push their product ---- */
+        case OP_MUL: {
+            int32_t b = stack_pop(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            int32_t a = stack_pop(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            if (!stack_push(vm, a * b)) {
+                vm->running = false;
+            }
+            break;
+        }
+
+        /* ---- DIV: Pop two values, push their quotient ---- */
+        case OP_DIV: {
+            int32_t b = stack_pop(vm);  /* b is the divisor */
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            /* Check for division by zero */
+            if (b == 0) {
+                vm->error = VM_ERROR_DIVISION_BY_ZERO;
+                vm->running = false;
+                return;
+            }
+
+            int32_t a = stack_pop(vm);  /* a is the dividend */
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            /* Integer division: a / b */
+            if (!stack_push(vm, a / b)) {
+                vm->running = false;
+            }
+            break;
+        }
+
+        /* ---- CMP: Compare two values ---- */
+        case OP_CMP: {
+            int32_t b = stack_pop(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            int32_t a = stack_pop(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            /* Push 1 if a < b, otherwise push 0 */
+            int32_t result = (a < b) ? 1 : 0;
+            if (!stack_push(vm, result)) {
+                vm->running = false;
+            }
+            break;
+        }
+
         /* ---- HALT: Stop execution ---- */
         case OP_HALT: {
             vm->running = false;
@@ -236,14 +289,10 @@ static void execute_instruction(VM *vm) {
     }
 }
 
-/*
- * Run the VM until it halts or hits an error.
- */
 VMError vm_run(VM *vm) {
     vm->running = true;
     vm->error = VM_OK;
 
-    /* Main execution loop */
     while (vm->running && vm->error == VM_OK) {
         execute_instruction(vm);
     }
@@ -255,9 +304,6 @@ VMError vm_run(VM *vm) {
  * DEBUGGING AND ERROR HANDLING
  * ============================================ */
 
-/*
- * Print the current state of the VM (for debugging).
- */
 void vm_dump_state(VM *vm) {
     printf("=== VM State ===\n");
     printf("PC: %d\n", vm->pc);
@@ -278,9 +324,6 @@ void vm_dump_state(VM *vm) {
     printf("================\n");
 }
 
-/*
- * Convert an error code to a human-readable string.
- */
 const char* vm_error_string(VMError error) {
     switch (error) {
         case VM_OK:                      return "OK";

@@ -1,152 +1,215 @@
-# Day 1: Basic VM Structure + Stack Operations
+# Day 2: Arithmetic Operations
 
 ## What We Built Today
 
-Today we created the foundation of our bytecode virtual machine (VM). We implemented:
-1. The core VM data structure that holds all the state
-2. Basic stack operations (push, pop, peek)
-3. Four instructions: PUSH, POP, DUP, and HALT
-4. Error handling for stack overflow and underflow
+Today we added arithmetic capabilities to our VM. We implemented five new instructions:
+1. **ADD** - Add two numbers
+2. **SUB** - Subtract two numbers
+3. **MUL** - Multiply two numbers
+4. **DIV** - Divide two numbers (with division-by-zero check)
+5. **CMP** - Compare two numbers (less than)
 
-By the end of today, we have a working VM that can run simple programs that push numbers onto a stack, duplicate them, and pop them off.
+Now our VM can do actual calculations, not just move numbers around!
 
 ---
 
 ## Key Concepts Explained
 
-### What is a Virtual Machine?
+### Stack-Based Arithmetic
 
-A **virtual machine (VM)** is a program that pretends to be a computer. Instead of running on real hardware, it executes instructions in software. Think of it like a game emulator - the emulator reads game instructions and executes them, even though your computer isn't the original game console.
-
-Our VM is a **bytecode VM**, which means it runs programs that have been converted into a sequence of bytes (numbers). Each number represents an instruction.
-
-### What is a Stack?
-
-A **stack** is a data structure that works like a stack of plates:
-- **Push**: Put a new plate on top
-- **Pop**: Take the top plate off
-- **Peek**: Look at the top plate without removing it
-
-This is called **LIFO** - Last In, First Out. The last thing you put on is the first thing you take off.
+In a stack-based VM, we don't use variables like `x = 5 + 3`. Instead:
+1. Push the operands onto the stack
+2. Execute the operation (it pops operands, pushes result)
 
 ```
-Stack visualization:
+To calculate 5 + 3:
 
-    PUSH 10     PUSH 20     POP
+    PUSH 5      PUSH 3       ADD
 
     +----+      +----+      +----+
-    | 10 |  ->  | 20 |  ->  | 10 |
+    | 5  |  ->  | 3  |  ->  | 8  |    Result!
     +----+      +----+      +----+
-                | 10 |
+                | 5  |
                 +----+
 ```
 
-### Stack Pointer (SP)
+### The Order of Operations (Critical!)
 
-The **stack pointer** is a number that tells us where the top of the stack is. When we:
-- **Push**: Put value at SP, then increase SP by 1
-- **Pop**: Decrease SP by 1, then read value at SP
+When we pop two values for an operation like SUB or DIV, the order matters:
 
 ```
-Initial:    SP = 0  (stack is empty)
-PUSH 10:    stack[0] = 10, SP = 1
-PUSH 20:    stack[1] = 20, SP = 2
-POP:        SP = 1, return stack[1] = 20
+Stack:  [..., a, b]    (b is on top)
+        ^^^^^^^^^^
+
+SUB pops:  First pop = b
+           Second pop = a
+
+Result:    a - b   (NOT b - a!)
 ```
 
-### Why Do We Need Overflow/Underflow Checks?
+**Example**: `PUSH 10, PUSH 3, SUB` gives us `10 - 3 = 7`, not `-7`.
 
-**Stack Overflow**: Trying to push when the stack is full. This could corrupt other memory.
+This is because:
+1. First, we push 10 (stack: [10])
+2. Then, we push 3 (stack: [10, 3])
+3. SUB pops 3 first (the "subtrahend")
+4. SUB pops 10 second (the "minuend")
+5. Result is 10 - 3 = 7
 
-**Stack Underflow**: Trying to pop when the stack is empty. This would read garbage data.
+### Integer Division
 
-Our VM checks for these and stops with an error instead of crashing or giving wrong results.
+Our VM uses **integer division** - it truncates the decimal part:
+- `10 / 3 = 3` (not 3.33...)
+- `7 / 2 = 3` (not 3.5)
+- `-7 / 2 = -3` (in C, integer division rounds toward zero)
+
+### The CMP Instruction
+
+CMP compares two values and pushes a result:
+- Push 1 if the first operand is **less than** the second
+- Push 0 otherwise
+
+```
+CMP behavior:
+    Pop b (top)
+    Pop a (second)
+    Push (a < b) ? 1 : 0
+
+Example: PUSH 3, PUSH 5, CMP
+    Stack after: [1]    because 3 < 5 is true
+```
+
+This will be useful for loops and conditionals (coming in Day 4).
 
 ---
 
 ## How the Code Works
 
-### The VM Structure (vm.h)
+### ADD Instruction Implementation
 
 ```c
-typedef struct {
-    int32_t *stack;      // Array to hold stack values
-    int sp;              // Stack Pointer - index of next free slot
-    int32_t *memory;     // Global memory (for later)
-    uint8_t *code;       // The bytecode program
-    int code_size;       // How many bytes in the program
-    int pc;              // Program Counter - which byte to read next
-    bool running;        // Is the VM still running?
-    VMError error;       // What went wrong (if anything)
-} VM;
-```
+case OP_ADD: {
+    int32_t b = stack_pop(vm);  // First pop = second operand
+    if (vm->error != VM_OK) { vm->running = false; return; }
 
-### Creating the VM (vm.c: vm_create)
+    int32_t a = stack_pop(vm);  // Second pop = first operand
+    if (vm->error != VM_OK) { vm->running = false; return; }
 
-1. Allocate memory for the VM structure
-2. Allocate arrays for stack, memory, and return stack
-3. Set everything to zero/empty
-4. Return the new VM
-
-### Running a Program (vm.c: vm_run)
-
-The VM runs a **fetch-decode-execute loop**:
-
-```
-while (running) {
-    1. FETCH:  Read the byte at position PC (this is the opcode)
-    2. DECODE: Figure out which instruction it is
-    3. EXECUTE: Do what that instruction says
-    4. Repeat
+    if (!stack_push(vm, a + b)) {  // Push the result
+        vm->running = false;
+    }
+    break;
 }
 ```
 
-### PUSH Instruction
+**Step by step**:
+1. Pop the first value (this becomes `b`, the second operand)
+2. Check if popping caused an error (stack underflow?)
+3. Pop the second value (this becomes `a`, the first operand)
+4. Check for errors again
+5. Calculate `a + b` and push it back
+6. Check if pushing caused an error (stack overflow?)
 
-**Opcode**: 0x01
-**Format**: 1 byte opcode + 4 bytes value (5 bytes total)
+### DIV Instruction - Division by Zero Check
+
+```c
+case OP_DIV: {
+    int32_t b = stack_pop(vm);  // b is the divisor
+    if (vm->error != VM_OK) { vm->running = false; return; }
+
+    // IMPORTANT: Check for division by zero!
+    if (b == 0) {
+        vm->error = VM_ERROR_DIVISION_BY_ZERO;
+        vm->running = false;
+        return;
+    }
+
+    int32_t a = stack_pop(vm);  // a is the dividend
+    if (vm->error != VM_OK) { vm->running = false; return; }
+
+    if (!stack_push(vm, a / b)) {
+        vm->running = false;
+    }
+    break;
+}
+```
+
+**Why check for zero?** In C, dividing by zero causes undefined behavior - the program might crash, give garbage, or anything. Our VM gracefully reports an error instead.
+
+### CMP Instruction - Comparison
+
+```c
+case OP_CMP: {
+    int32_t b = stack_pop(vm);
+    if (vm->error != VM_OK) { vm->running = false; return; }
+
+    int32_t a = stack_pop(vm);
+    if (vm->error != VM_OK) { vm->running = false; return; }
+
+    // The ternary operator: (condition) ? value_if_true : value_if_false
+    int32_t result = (a < b) ? 1 : 0;
+
+    if (!stack_push(vm, result)) {
+        vm->running = false;
+    }
+    break;
+}
+```
+
+---
+
+## Calculating Expressions
+
+### Example: (10 + 5) * 3 - 3 = 42
+
+In our assembly:
+```assembly
+PUSH 10
+PUSH 5
+ADD         ; Stack: [15]
+PUSH 3
+MUL         ; Stack: [45]
+PUSH 3
+SUB         ; Stack: [42]
+HALT
+```
+
+**Execution trace**:
+```
+Instruction    Stack After
+-----------    -----------
+PUSH 10        [10]
+PUSH 5         [10, 5]
+ADD            [15]
+PUSH 3         [15, 3]
+MUL            [45]
+PUSH 3         [45, 3]
+SUB            [42]
+HALT           [42]  (program stops)
+```
+
+### How to Convert Infix to Stack-Based
+
+**Infix notation**: `(10 + 5) * 3 - 3`
+
+To convert to stack-based:
+1. Identify the order of operations
+2. Push operands before each operation
+3. Do innermost operations first
 
 ```
-PUSH 42 in bytecode:  01 2A 00 00 00
-                      ^  ^^^^^^^^^
-                      |  |
-                      |  +-- 42 in little-endian (least significant byte first)
-                      +-- opcode for PUSH
+(10 + 5) * 3 - 3
+    ^^^^^^^         First: 10 + 5
+    ^^^^^^^^^^^     Then: result * 3
+    ^^^^^^^^^^^^^^^  Finally: result - 3
 ```
 
-**What it does**:
-1. Read the 4-byte value after the opcode
-2. Put that value on top of the stack
-3. Move to the next instruction
-
-### POP Instruction
-
-**Opcode**: 0x02
-**Format**: 1 byte (just the opcode)
-
-**What it does**:
-1. Remove the top value from the stack
-2. (We don't do anything with the value - it's just discarded)
-
-### DUP Instruction
-
-**Opcode**: 0x03
-**Format**: 1 byte (just the opcode)
-
-**What it does**:
-1. Look at the top value (peek)
-2. Push that same value again
-3. Now we have two copies of the value on the stack
-
-### HALT Instruction
-
-**Opcode**: 0xFF
-**Format**: 1 byte (just the opcode)
-
-**What it does**:
-1. Set running = false
-2. The main loop stops
-3. The program ends
+Stack-based:
+```
+PUSH 10, PUSH 5, ADD    ; Do (10 + 5)
+PUSH 3, MUL             ; Do result * 3
+PUSH 3, SUB             ; Do result - 3
+```
 
 ---
 
@@ -155,11 +218,9 @@ PUSH 42 in bytecode:  01 2A 00 00 00
 ### Building
 
 ```bash
-cd student1/day1
+cd student1/day2
 make
 ```
-
-This compiles the code and creates `vm_test`.
 
 ### Running
 
@@ -167,102 +228,68 @@ This compiles the code and creates `vm_test`.
 ./vm_test
 ```
 
-Or use the Makefile:
-
-```bash
-make run
-```
-
 ### Expected Output
 
-```
-========================================
-  Virtual Machine - Day 1 Tests
-  Testing: PUSH, POP, DUP, HALT
-========================================
+You should see 10 tests:
+1. ADD: Basic addition
+2. SUB: Basic subtraction
+3. MUL: Basic multiplication
+4. DIV: Basic division
+5. Division by zero: Error detection
+6. CMP (true): 3 < 5 gives 1
+7. CMP (false): 10 < 5 gives 0
+8. Complex expression: (10 + 5) * 3 - 3 = 42
+9. Negative result: 10 - 15 = -5
+10. Integer division: 10 / 3 = 3 (truncated)
 
-=== Test 1: PUSH and HALT ===
-Program: PUSH 42, HALT
-Expected: Stack = [42]
-=== VM State ===
-PC: 6
-SP: 1
-Running: no
-Error: OK
-Stack: [42]
-Top of stack: 42
-================
-TEST PASSED!
-
-=== Test 2: Multiple PUSH ===
-Program: PUSH 10, PUSH 20, PUSH 30, HALT
-Expected: Stack = [10, 20, 30]
-=== VM State ===
-PC: 16
-SP: 3
-Running: no
-Error: OK
-Stack: [10, 20, 30]
-Top of stack: 30
-================
-TEST PASSED!
-
-... (more tests) ...
-
-========================================
-  All tests completed!
-========================================
-```
-
-### Cleaning Up
-
-```bash
-make clean
-```
-
----
-
-## What to Expect
-
-When you run the tests, you should see:
-- **6 tests** run
-- Each test shows what the program does
-- The VM state after running (PC, SP, Stack contents)
-- "TEST PASSED!" for each test
-
-If any test fails, check:
-1. Did the code compile without errors?
-2. Are all files in the same directory?
-3. Look at the stack contents - do they match expected?
+All tests should pass!
 
 ---
 
 ## Common Mistakes
 
-### 1. Forgetting Little-Endian Byte Order
+### 1. Wrong Operand Order
 
-When writing numbers in bytecode, the **least significant byte comes first**.
+**Wrong thinking**: "SUB pops two values, so b - a"
+**Right thinking**: "First pop is second operand, second pop is first operand"
 
+If you get -7 instead of 7 for `PUSH 10, PUSH 3, SUB`, you have the operand order backwards.
+
+### 2. Forgetting Error Checks Between Pops
+
+Each pop can fail if the stack is empty. Check after EACH pop:
+
+```c
+// BAD - might use garbage if first pop fails
+int32_t b = stack_pop(vm);
+int32_t a = stack_pop(vm);  // Runs even if first pop failed!
+
+// GOOD - check after each operation
+int32_t b = stack_pop(vm);
+if (vm->error != VM_OK) return;  // Stop if error
+int32_t a = stack_pop(vm);
+if (vm->error != VM_OK) return;  // Stop if error
 ```
-42 in decimal = 0x0000002A in hex
-In bytecode:   2A 00 00 00  (NOT 00 00 00 2A)
+
+### 3. Not Checking for Division by Zero
+
+Always check the divisor BEFORE doing the division:
+
+```c
+// BAD - undefined behavior if b is 0
+int32_t result = a / b;
+
+// GOOD - check first
+if (b == 0) {
+    vm->error = VM_ERROR_DIVISION_BY_ZERO;
+    return;
+}
+int32_t result = a / b;
 ```
 
-### 2. Off-by-One Errors in Stack Pointer
+### 4. Integer Overflow
 
-The stack pointer points to the **next free slot**, not the top element.
-- To read the top: use `stack[sp - 1]`
-- To push: use `stack[sp]`, then increment sp
-
-### 3. Forgetting to Move PC
-
-After reading an instruction, PC must advance:
-- No-operand instructions: PC += 1
-- Instructions with 4-byte operand: PC += 5 (already done in our code by advancing after opcode and after reading operand)
-
-### 4. Not Checking for Errors
-
-Every stack operation can fail. Always check if an error occurred before continuing.
+Our VM uses 32-bit signed integers. The maximum value is about 2 billion. If you add two large numbers, they might wrap around to a negative number. Our simple VM doesn't check for this - be aware it can happen!
 
 ---
 
@@ -270,22 +297,19 @@ Every stack operation can fail. Always check if an error occurred before continu
 
 | File | Purpose |
 |------|---------|
-| `instructions.h` | Defines opcode numbers (shared with assembler) |
-| `vm.h` | VM structure and function declarations |
-| `vm.c` | VM implementation (stack ops, instructions) |
-| `main.c` | Test harness with example programs |
+| `instructions.h` | Same opcode definitions |
+| `vm.h` | Same VM structure |
+| `vm.c` | VM with arithmetic operations added |
+| `main.c` | Tests for arithmetic operations |
 | `Makefile` | Build instructions |
 | `SUMMARY.md` | This explanation file |
 
 ---
 
-## What's Next (Day 2)
+## What's Next (Day 3)
 
-Tomorrow we'll add arithmetic operations:
-- ADD: Add two numbers
-- SUB: Subtract
-- MUL: Multiply
-- DIV: Divide
-- CMP: Compare two numbers
+Tomorrow we'll add memory operations:
+- **STORE**: Save a value to a memory location
+- **LOAD**: Retrieve a value from memory
 
-These will let us do calculations, not just move numbers around!
+This will let us store intermediate results, which is essential for more complex programs like loops.
