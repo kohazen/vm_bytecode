@@ -1,15 +1,22 @@
 /*
+<<<<<<< HEAD
  * main.c - Test Harness for the Virtual Machine (Day 2)
  *
  * Tests arithmetic operations: ADD, SUB, MUL, DIV, CMP
+=======
+ * main.c - Lexer Test Program
+ *
+ * Day 1: Test the lexer with sample assembly code.
+>>>>>>> master
  */
 
 #include <stdio.h>
-#include <stdint.h>
-#include "vm.h"
-#include "instructions.h"
+#include <stdlib.h>
+#include <string.h>
+#include "lexer.h"
 
 /*
+<<<<<<< HEAD
  * Test 1: Simple Addition
  * Program: PUSH 10, PUSH 20, ADD, HALT
  * Expected: 30
@@ -66,9 +73,25 @@ void test_sub(void) {
 
     if (result == VM_OK && vm->sp == 1 && vm->stack[0] == 42) {
         printf("TEST PASSED!\n");
+=======
+ * Test the lexer with a sample program.
+ */
+static void test_lexer(const char *name, const char *source) {
+    printf("\n=== Test: %s ===\n", name);
+    printf("Source:\n%s\n", source);
+    printf("\n");
+
+    Lexer lexer;
+    lexer_init(&lexer, source);
+
+    if (lexer_tokenize(&lexer)) {
+        lexer_print_tokens(&lexer);
+        printf("Tokenization successful!\n");
+>>>>>>> master
     } else {
-        printf("TEST FAILED!\n");
+        printf("Tokenization failed: %s\n", lexer.error_msg);
     }
+<<<<<<< HEAD
 
     vm_destroy(vm);
 }
@@ -298,6 +321,8 @@ void test_negative_result(void) {
     }
 
     vm_destroy(vm);
+=======
+>>>>>>> master
 }
 
 /*
@@ -334,6 +359,7 @@ void test_integer_division(void) {
 
 int main(void) {
     printf("========================================\n");
+<<<<<<< HEAD
     printf("  Virtual Machine - Day 2 Tests\n");
     printf("  Testing: ADD, SUB, MUL, DIV, CMP\n");
     printf("========================================\n");
@@ -348,9 +374,94 @@ int main(void) {
     test_complex_expression();
     test_negative_result();
     test_integer_division();
+=======
+    printf("  Assembler Lexer - Day 1 Tests\n");
+    printf("========================================\n");
+
+    /* Test 1: Simple program */
+    test_lexer("Simple program",
+        "PUSH 42\n"
+        "PUSH 8\n"
+        "ADD\n"
+        "HALT\n"
+    );
+
+    /* Test 2: Program with comments */
+    test_lexer("Comments",
+        "; This is a comment\n"
+        "PUSH 10    ; push first value\n"
+        "PUSH 20    ; push second value\n"
+        "ADD        ; add them\n"
+        "HALT\n"
+    );
+
+    /* Test 3: Program with labels */
+    test_lexer("Labels",
+        "start:\n"
+        "    PUSH 5\n"
+        "    PUSH 1\n"
+        "    SUB\n"
+        "    DUP\n"
+        "    JNZ start\n"
+        "    HALT\n"
+    );
+
+    /* Test 4: Negative numbers */
+    test_lexer("Negative numbers",
+        "PUSH -42\n"
+        "PUSH 10\n"
+        "ADD\n"
+        "HALT\n"
+    );
+
+    /* Test 5: All instructions */
+    test_lexer("All instructions",
+        "PUSH 1\n"
+        "POP\n"
+        "DUP\n"
+        "ADD\n"
+        "SUB\n"
+        "MUL\n"
+        "DIV\n"
+        "CMP\n"
+        "JMP end\n"
+        "JZ skip\n"
+        "JNZ loop\n"
+        "STORE 0\n"
+        "LOAD 0\n"
+        "CALL func\n"
+        "RET\n"
+        "end:\n"
+        "skip:\n"
+        "loop:\n"
+        "func:\n"
+        "HALT\n"
+    );
+
+    /* Test 6: Memory operations */
+    test_lexer("Memory operations",
+        "PUSH 100\n"
+        "STORE 0\n"
+        "PUSH 200\n"
+        "STORE 1\n"
+        "LOAD 0\n"
+        "LOAD 1\n"
+        "ADD\n"
+        "HALT\n"
+    );
+
+    /* Test 7: Empty lines and extra whitespace */
+    test_lexer("Whitespace handling",
+        "\n"
+        "   PUSH   42   \n"
+        "\n"
+        "   HALT   \n"
+        "\n"
+    );
+>>>>>>> master
 
     printf("\n========================================\n");
-    printf("  All tests completed!\n");
+    printf("  All lexer tests completed!\n");
     printf("========================================\n");
 
     return 0;
