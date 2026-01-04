@@ -1,15 +1,15 @@
-# Makefile for Day 1 - Lexer
+# Makefile for Day 2 - Parser
 #
-# Compiles the lexer test program.
+# Compiles the parser test program.
 
 CC = gcc
 CFLAGS = -Wall -Wextra -g -std=c99
 
 # Object files
-OBJECTS = main.o lexer.o
+OBJECTS = main.o lexer.o parser.o
 
 # Executable
-TARGET = lexer_test
+TARGET = parser_test
 
 # Default target
 all: $(TARGET)
@@ -19,12 +19,16 @@ $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
 
 # Compile main.c
-main.o: main.c lexer.h
+main.o: main.c lexer.h parser.h
 	$(CC) $(CFLAGS) -c main.c
 
 # Compile lexer.c
 lexer.o: lexer.c lexer.h
 	$(CC) $(CFLAGS) -c lexer.c
+
+# Compile parser.c
+parser.o: parser.c parser.h lexer.h instructions.h
+	$(CC) $(CFLAGS) -c parser.c
 
 # Clean up
 clean:
