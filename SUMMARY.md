@@ -1,348 +1,335 @@
-# Day 2: Parser + Opcode Table
+# Day 3: Memory Operations
 
 ## What We Built Today
 
-Today we created the **parser** - the second stage of our assembler. The parser takes tokens from the lexer and converts them into **parsed instructions** with their opcodes and operands.
+Today we added memory capabilities to our VM:
+1. **STORE** - Save a value from the stack to memory
+2. **LOAD** - Retrieve a value from memory to the stack
 
-We also created the **opcode table** - a lookup table that maps instruction names like "PUSH" to their numeric opcodes like `0x01`.
+With memory, we can now store intermediate results and implement variables - essential for loops and complex programs!
 
 ---
 
 ## Key Concepts Explained
 
-### 1. What is a Parser?
+### Why Do We Need Memory?
 
-A parser takes tokens and builds a structured representation of the program. In our case:
+The stack is great for calculations, but it has a limitation: once you pop a value, it's gone. What if you need to use a value multiple times, or save it for later?
 
-**Input (Tokens)**:
-```
-INSTRUCTION("PUSH") → NUMBER(42) → NEWLINE → INSTRUCTION("ADD") → NEWLINE
-```
-
-**Output (Parsed Instructions)**:
-```
-Instruction { opcode=0x01, operand=42, has_operand=true }
-Instruction { opcode=0x10, operand=0, has_operand=false }
-```
-
-### 2. The Opcode Table
-
-The opcode table is a simple lookup table:
-
-| Name | Opcode | Has Operand? |
-|------|--------|--------------|
-| PUSH | 0x01 | Yes |
-| POP | 0x02 | No |
-| ADD | 0x10 | No |
-| JMP | 0x20 | Yes |
-| HALT | 0xFF | No |
-
-In C:
-```c
-static const OpcodeEntry opcode_table[] = {
-    {"PUSH", OP_PUSH, true},
-    {"POP",  OP_POP,  false},
-    {"ADD",  OP_ADD,  false},
-    {"JMP",  OP_JMP,  true},
-    {"HALT", OP_HALT, false},
-    {NULL, 0, false}  // End marker
-};
-```
-
-### 3. Parsing Strategy
-
-Our parser uses a simple approach:
+**Memory** is like a set of numbered boxes where we can store values:
+- Each box has an **index** (0, 1, 2, ..., 255)
+- Each box can hold one 32-bit integer
+- Values stay in memory until we overwrite them
 
 ```
-1. Skip any newlines
-2. Look at current token
-3. If it's a label definition, skip it (handled in Day 3)
-4. If it's an instruction:
-   a. Look up opcode in the table
-   b. If instruction has operand, read the next token
-   c. Add to instruction list
-5. Repeat until EOF
+Memory visualization:
+
+Index:  [0]   [1]   [2]   [3]   ...  [255]
+Value:  [42]  [0]   [100] [0]   ...  [0]
 ```
 
-### 4. Case Insensitivity
+### Stack vs Memory
 
-Assembly is traditionally case-insensitive. These are all equivalent:
-- `PUSH 42`
-- `push 42`
-- `Push 42`
+| Feature | Stack | Memory |
+|---------|-------|--------|
+| Access | Only top element | Any index |
+| Size | Dynamic (push/pop) | Fixed (256 cells) |
+| Persistence | Pop removes value | Stays until overwritten |
+| Use case | Calculations | Variables, storage |
 
-We use a case-insensitive string comparison:
-```c
-static int strcasecmp_local(const char *s1, const char *s2) {
-    while (*s1 && *s2) {
-        if (toupper(*s1) != toupper(*s2)) return 1;
-        s1++;
-        s2++;
-    }
-    return *s1 - *s2;
-}
+### STORE Instruction
+
+**Opcode**: 0x30
+**Format**: 1 byte opcode + 4 bytes index (5 bytes total)
+
+**What it does**:
+1. Read the memory index from bytecode
+2. Pop a value from the stack
+3. Store that value at memory[index]
+
+```
+Before STORE 0:
+    Stack: [42]     Memory[0]: 0
+
+After STORE 0:
+    Stack: []       Memory[0]: 42
 ```
 
-### 5. Label References
+**Important**: STORE consumes (pops) the value from the stack!
 
-When we see something like `JMP loop`, the operand is a label name, not a number. We mark it as a label reference:
+### LOAD Instruction
 
-```c
-if (operand->type == TOKEN_INSTRUCTION) {
-    inst.is_label_ref = true;
-    strcpy(inst.label_name, operand->text);
-}
+**Opcode**: 0x31
+**Format**: 1 byte opcode + 4 bytes index (5 bytes total)
+
+**What it does**:
+1. Read the memory index from bytecode
+2. Read the value from memory[index]
+3. Push that value onto the stack
+
+```
+Before LOAD 0:
+    Stack: []       Memory[0]: 42
+
+After LOAD 0:
+    Stack: [42]     Memory[0]: 42  (unchanged)
 ```
 
-The actual address will be resolved in Day 3 (label resolution).
+**Important**: LOAD doesn't remove the value from memory - you can load the same memory location multiple times!
 
 ---
 
 ## How the Code Works
 
-### The ParsedInstruction Structure
+### STORE Implementation
 
 ```c
-typedef struct {
-    uint8_t opcode;        // The opcode (e.g., 0x01 for PUSH)
-    bool has_operand;      // Does this instruction take an operand?
-    int32_t operand;       // The numeric operand (if any)
-    bool is_label_ref;     // Is the operand a label reference?
-    char label_name[64];   // Label name (if is_label_ref is true)
-    int line;              // Source line number for errors
-} ParsedInstruction;
+case OP_STORE: {
+    /* Read the memory index from bytecode */
+    int32_t index = read_int32(vm);
+    if (vm->error != VM_OK) { vm->running = false; return; }
+
+    /* Check bounds - is the index valid? */
+    if (index < 0 || index >= MEMORY_SIZE) {
+        vm->error = VM_ERROR_MEMORY_BOUNDS;
+        vm->running = false;
+        return;
+    }
+
+    /* Pop value from stack */
+    int32_t value = stack_pop(vm);
+    if (vm->error != VM_OK) { vm->running = false; return; }
+
+    /* Store in memory */
+    vm->memory[index] = value;
+    break;
+}
 ```
 
-### The Parsing Loop
+### LOAD Implementation
 
 ```c
-bool parser_parse(Parser *parser) {
-    while (!is_at_end(parser)) {
-        skip_newlines(parser);
-        Token *token = current(parser);
+case OP_LOAD: {
+    /* Read the memory index from bytecode */
+    int32_t index = read_int32(vm);
+    if (vm->error != VM_OK) { vm->running = false; return; }
 
-        // Skip label definitions
-        if (token->type == TOKEN_LABEL_DEF) {
-            advance(parser);
-            continue;
-        }
-
-        // Must be an instruction
-        const OpcodeEntry *entry = lookup_opcode(token->text);
-        if (!entry) {
-            // Error: unknown instruction
-        }
-
-        ParsedInstruction inst;
-        inst.opcode = entry->opcode;
-        inst.has_operand = entry->has_operand;
-        advance(parser);
-
-        // Read operand if needed
-        if (entry->has_operand) {
-            Token *operand = current(parser);
-            if (operand->type == TOKEN_NUMBER) {
-                inst.operand = operand->value;
-            } else {
-                // Assume it's a label reference
-                inst.is_label_ref = true;
-                strcpy(inst.label_name, operand->text);
-            }
-            advance(parser);
-        }
-
-        add_instruction(parser, &inst);
+    /* Check bounds */
+    if (index < 0 || index >= MEMORY_SIZE) {
+        vm->error = VM_ERROR_MEMORY_BOUNDS;
+        vm->running = false;
+        return;
     }
-    return true;
+
+    /* Push value from memory onto stack */
+    if (!stack_push(vm, vm->memory[index])) {
+        vm->running = false;
+    }
+    break;
 }
+```
+
+### Memory Bounds Checking
+
+Why do we check bounds?
+
+```c
+if (index < 0 || index >= MEMORY_SIZE)
+```
+
+Without this check, if someone tries `LOAD 1000`:
+- We'd read beyond our allocated array
+- Could crash or return garbage
+- Security vulnerability!
+
+With bounds checking, we report a clean error.
+
+---
+
+## Practical Examples
+
+### Example 1: Using Memory as a Variable
+
+Calculate `x = 5; y = x + 3; result = y * 2`
+
+```assembly
+; x = 5
+PUSH 5
+STORE 0     ; M[0] = x = 5
+
+; y = x + 3
+LOAD 0      ; push x (5)
+PUSH 3
+ADD         ; 5 + 3 = 8
+STORE 1     ; M[1] = y = 8
+
+; result = y * 2
+LOAD 1      ; push y (8)
+PUSH 2
+MUL         ; 8 * 2 = 16
+STORE 2     ; M[2] = result = 16
+
+; Push final result
+LOAD 2
+HALT        ; Stack: [16]
+```
+
+### Example 2: Accumulator Pattern
+
+Sum numbers using a memory location as accumulator:
+
+```assembly
+; sum = 0
+PUSH 0
+STORE 0
+
+; sum += 10
+LOAD 0      ; load current sum
+PUSH 10
+ADD
+STORE 0     ; save new sum
+
+; sum += 20
+LOAD 0
+PUSH 20
+ADD
+STORE 0
+
+; sum += 30
+LOAD 0
+PUSH 30
+ADD
+STORE 0
+
+; Result
+LOAD 0      ; Stack: [60]
+HALT
+```
+
+This pattern is the foundation for loops (Day 4)!
+
+### Example 3: Swapping Two Values
+
+Swap M[0] and M[1] using M[2] as temporary storage:
+
+```assembly
+; Initial: M[0] = 5, M[1] = 10
+PUSH 5
+STORE 0
+PUSH 10
+STORE 1
+
+; Swap using temp
+LOAD 0      ; temp = M[0]
+STORE 2     ; M[2] = temp (5)
+LOAD 1      ; get M[1]
+STORE 0     ; M[0] = M[1] (10)
+LOAD 2      ; get temp
+STORE 1     ; M[1] = temp (5)
+
+; Now: M[0] = 10, M[1] = 5
+HALT
 ```
 
 ---
 
-## How to Test
+## Memory Initialization
 
-### Compile
+When the VM starts (or loads a new program):
+- All 256 memory cells are set to 0
+- This is done in `vm_load_program()`
+
+```c
+memset(vm->memory, 0, MEMORY_SIZE * sizeof(int32_t));
+```
+
+This means:
+- You can safely LOAD from any address (you'll get 0)
+- You don't need to initialize variables to 0 first
+
+---
+
+## How to Test It
+
+### Building
+
 ```bash
-make clean
+cd student1/day3
 make
 ```
 
-### Run Tests
+### Running
+
 ```bash
-./parser_test
+./vm_test
 ```
 
-Or simply:
-```bash
-make test
-```
+### Expected Output
+
+8 tests covering:
+1. Basic STORE and LOAD
+2. Multiple memory locations
+3. Accumulator pattern (sum)
+4. Last valid index (255)
+5. STORE out of bounds error
+6. LOAD out of bounds error
+7. Memory initialized to zero
+8. Swap using memory
+
+All tests should pass!
 
 ---
 
-## Expected Output
+## Common Mistakes
 
-```
-========================================
-  Assembler Parser - Day 2 Tests
-========================================
+### 1. Forgetting STORE Pops the Stack
 
-=== Test: Simple arithmetic ===
-Source:
-PUSH 10
-PUSH 20
-ADD
-HALT
-
-Tokens: 9
-=== Parsed Instructions (4 total) ===
-[  0] Line  1: opcode=0x01 operand=10
-[  1] Line  2: opcode=0x01 operand=20
-[  2] Line  3: opcode=0x10
-[  3] Line  4: opcode=0xFF
-======================================
-Parsing successful!
-
-...
-
-=== Test: Label references ===
-Source:
-start:
-    PUSH 5
-    JNZ start
-end:
-    HALT
-
-Tokens: 9
-=== Parsed Instructions (3 total) ===
-[  0] Line  2: opcode=0x01 operand=5
-[  1] Line  3: opcode=0x22 operand=<start>
-[  2] Line  5: opcode=0xFF
-======================================
-Parsing successful!
-
-=== Test: Error - missing operand ===
-Source:
-PUSH
-
-Expected error: Line 1: PUSH requires an operand
-
-=== Test: Error - unknown instruction ===
-Source:
-UNKNOWN 42
-
-Expected error: Line 1: Unknown instruction 'UNKNOWN'
-
-========================================
-  All parser tests completed!
-========================================
+```assembly
+PUSH 42
+STORE 0     ; Stack is now EMPTY!
+ADD         ; ERROR: Stack underflow!
 ```
 
----
+After STORE, the value is gone from the stack. If you need it again, LOAD it back.
 
-## Instruction Categories
+### 2. Wrong Index Encoding
 
-### Stack Operations
-| Instruction | Opcode | Operand | Effect |
-|-------------|--------|---------|--------|
-| PUSH val | 0x01 | 4 bytes | Push value onto stack |
-| POP | 0x02 | None | Remove top of stack |
-| DUP | 0x03 | None | Duplicate top of stack |
+Memory index is 4 bytes in little-endian:
+- Index 0: `00 00 00 00`
+- Index 1: `01 00 00 00`
+- Index 255: `FF 00 00 00`
+- Index 256: `00 01 00 00` (out of bounds!)
 
-### Arithmetic
-| Instruction | Opcode | Operand | Effect |
-|-------------|--------|---------|--------|
-| ADD | 0x10 | None | a, b → a+b |
-| SUB | 0x11 | None | a, b → a-b |
-| MUL | 0x12 | None | a, b → a*b |
-| DIV | 0x13 | None | a, b → a/b |
-| CMP | 0x14 | None | a, b → (a<b ? 1 : 0) |
+### 3. Not Checking for Errors
 
-### Control Flow
-| Instruction | Opcode | Operand | Effect |
-|-------------|--------|---------|--------|
-| JMP addr | 0x20 | 4 bytes | Jump to address |
-| JZ addr | 0x21 | 4 bytes | Jump if zero |
-| JNZ addr | 0x22 | 4 bytes | Jump if not zero |
+Both STORE and LOAD can fail:
+- STORE needs a value on the stack (underflow possible)
+- Both can have invalid indices (bounds error)
 
-### Memory
-| Instruction | Opcode | Operand | Effect |
-|-------------|--------|---------|--------|
-| STORE idx | 0x30 | 4 bytes | Store to memory[idx] |
-| LOAD idx | 0x31 | 4 bytes | Load from memory[idx] |
+### 4. Assuming Memory Persists Across Runs
 
-### Functions
-| Instruction | Opcode | Operand | Effect |
-|-------------|--------|---------|--------|
-| CALL addr | 0x40 | 4 bytes | Call function |
-| RET | 0x41 | None | Return from function |
-
-### Special
-| Instruction | Opcode | Operand | Effect |
-|-------------|--------|---------|--------|
-| HALT | 0xFF | None | Stop execution |
-
----
-
-## Common Mistakes and How to Avoid Them
-
-### 1. Forgetting Case Insensitivity
-```c
-// WRONG - only matches uppercase
-if (strcmp(name, "PUSH") == 0)
-
-// CORRECT - case-insensitive
-if (strcasecmp(name, "PUSH") == 0)
-```
-
-### 2. Not Handling Missing Operands
-```c
-// WRONG - crashes if no operand
-Token *operand = current(parser);
-inst.operand = operand->value;
-
-// CORRECT - check first
-if (is_at_end(parser) || current(parser)->type == TOKEN_NEWLINE) {
-    // Error: missing operand
-}
-```
-
-### 3. Not Distinguishing Labels from Instructions
-When `JMP loop` is parsed, "loop" looks like a TOKEN_INSTRUCTION but it's actually a label reference. We mark it:
-```c
-if (operand->type == TOKEN_INSTRUCTION) {
-    inst.is_label_ref = true;
-}
-```
-
----
-
-## What's Next?
-
-Tomorrow (Day 3) we'll implement **label resolution**:
-1. Collect all label definitions and their addresses
-2. Replace label references with actual addresses
-3. This is called "two-pass assembly"
+When you load a new program, memory is reset to zeros. Don't assume values from a previous run are still there.
 
 ---
 
 ## Files in This Day
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `instructions.h` | ~60 | Opcode definitions |
-| `lexer.h` | ~80 | Token types |
-| `lexer.c` | ~190 | Tokenization |
-| `parser.h` | ~70 | Parsed instruction structure |
-| `parser.c` | ~180 | Parsing implementation |
-| `main.c` | ~130 | Test program |
-| `Makefile` | ~35 | Build configuration |
+| File | Purpose |
+|------|---------|
+| `instructions.h` | Same opcode definitions |
+| `vm.h` | Same VM structure |
+| `vm.c` | VM with memory operations added |
+| `main.c` | Tests for memory operations |
+| `Makefile` | Build instructions |
+| `SUMMARY.md` | This explanation file |
 
 ---
 
-## Key Takeaways
+## What's Next (Day 4)
 
-1. **Parsers build structure from tokens** - turning a stream into meaningful data
-2. **Lookup tables are efficient** - O(n) but n is small (16 instructions)
-3. **Case insensitivity matters** - assembly tradition
-4. **Separate concerns** - parsing doesn't resolve labels, just marks them
-5. **Good errors help users** - include line numbers and clear messages
+Tomorrow we'll add control flow:
+- **JMP** - Unconditional jump (goto)
+- **JZ** - Jump if zero (conditional)
+- **JNZ** - Jump if not zero (conditional)
+
+With memory + jumps, we can finally implement loops!
