@@ -1,4 +1,4 @@
-# Makefile for VM Day 3
+# Makefile for VM Day 5
 CC = gcc
 CFLAGS = -Wall -Wextra -g
 
