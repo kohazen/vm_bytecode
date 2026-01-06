@@ -1,7 +1,7 @@
 /*
- * main.c - Parser Test Program
+ * main.c - Label Resolution Test Program
  *
- * Day 2: Test the parser with sample assembly code.
+ * Day 3: Test two-pass label resolution.
  */
 
 #include <stdio.h>
@@ -9,9 +9,10 @@
 #include <string.h>
 #include "lexer.h"
 #include "parser.h"
+#include "labels.h"
 
 /*
- * Test the lexer and parser with a sample program.
+ * Test the complete pipeline: lex → parse → resolve labels
  */
 static void test_program(const char *name, const char *source) {
     printf("\n=== Test: %s ===\n", name);
@@ -26,8 +27,6 @@ static void test_program(const char *name, const char *source) {
         return;
     }
 
-    printf("\nTokens: %d\n", lexer.token_count);
-
     /* Step 2: Parse */
     Parser parser;
     parser_init(&parser, lexer.tokens, lexer.token_count);
@@ -37,88 +36,115 @@ static void test_program(const char *name, const char *source) {
         return;
     }
 
-    parser_print_instructions(&parser);
-    printf("Parsing successful!\n");
+    printf("Parsed %d instructions\n", parser.instruction_count);
+
+    /* Step 3: Collect labels (Pass 1) */
+    SymbolTable symtab;
+    symtab_init(&symtab);
+
+    if (!symtab_collect_labels(&symtab, lexer.tokens, lexer.token_count,
+                               parser.instructions, parser.instruction_count)) {
+        printf("Label collection error: %s\n", symtab.error_msg);
+        return;
+    }
+
+    symtab_print(&symtab);
+
+    /* Step 4: Resolve labels (Pass 2) */
+    if (!symtab_resolve_labels(&symtab, parser.instructions, parser.instruction_count)) {
+        printf("Label resolution error: %s\n", symtab.error_msg);
+        return;
+    }
+
+    /* Print final instructions with resolved addresses */
+    printf("\n=== Resolved Instructions ===\n");
+    int address = 0;
+    for (int i = 0; i < parser.instruction_count; i++) {
+        ParsedInstruction *inst = &parser.instructions[i];
+        printf("[%3d] addr=%3d: opcode=0x%02X", i, address, inst->opcode);
+        if (inst->has_operand) {
+            printf(" operand=%d (0x%04X)", inst->operand, inst->operand);
+        }
+        printf("\n");
+        address += inst->has_operand ? 5 : 1;
+    }
+    printf("=============================\n");
+    printf("Total bytecode size: %d bytes\n", address);
+    printf("\nLabel resolution successful!\n");
 }
 
 int main(void) {
     printf("========================================\n");
-    printf("  Assembler Parser - Day 2 Tests\n");
+    printf("  Assembler Labels - Day 3 Tests\n");
     printf("========================================\n");
 
-    /* Test 1: Simple arithmetic */
-    test_program("Simple arithmetic",
-        "PUSH 10\n"
-        "PUSH 20\n"
-        "ADD\n"
-        "HALT\n"
-    );
-
-    /* Test 2: All instructions without operands */
-    test_program("No-operand instructions",
-        "POP\n"
-        "DUP\n"
-        "ADD\n"
-        "SUB\n"
-        "MUL\n"
-        "DIV\n"
-        "CMP\n"
-        "RET\n"
-        "HALT\n"
-    );
-
-    /* Test 3: All instructions with operands */
-    test_program("Operand instructions",
-        "PUSH 42\n"
-        "STORE 0\n"
-        "LOAD 1\n"
-        "JMP 0\n"
-        "JZ 0\n"
-        "JNZ 0\n"
-        "CALL 0\n"
-        "HALT\n"
-    );
-
-    /* Test 4: Negative numbers */
-    test_program("Negative numbers",
-        "PUSH -100\n"
-        "PUSH 50\n"
-        "ADD\n"
-        "HALT\n"
-    );
-
-    /* Test 5: Labels (references only, resolution in Day 3) */
-    test_program("Label references",
-        "start:\n"
-        "    PUSH 5\n"
-        "    JNZ start\n"
-        "end:\n"
+    /* Test 1: Simple loop with backward jump */
+    test_program("Simple loop (backward jump)",
+        "loop:\n"
+        "    PUSH 1\n"
+        "    SUB\n"
+        "    DUP\n"
+        "    JNZ loop\n"
         "    HALT\n"
     );
 
-    /* Test 6: Case insensitivity */
-    test_program("Case insensitivity",
-        "push 10\n"
-        "Push 20\n"
-        "PUSH 30\n"
-        "add\n"
-        "Add\n"
-        "halt\n"
+    /* Test 2: Forward jump */
+    test_program("Forward jump",
+        "    PUSH 0\n"
+        "    JZ skip\n"
+        "    PUSH 100\n"
+        "skip:\n"
+        "    PUSH 200\n"
+        "    HALT\n"
     );
 
-    /* Test 7: Comments and whitespace */
-    test_program("Comments and whitespace",
-        "; Program start\n"
-        "PUSH 100  ; first value\n"
-        "   PUSH 200   ; second value\n"
-        "ADD           ; add them\n"
-        "HALT          ; done\n"
+    /* Test 3: Multiple labels */
+    test_program("Multiple labels",
+        "start:\n"
+        "    PUSH 5\n"
+        "    JMP middle\n"
+        "end:\n"
+        "    HALT\n"
+        "middle:\n"
+        "    PUSH 10\n"
+        "    JMP end\n"
     );
 
-    /* Test 8: Error - missing operand */
-    printf("\n=== Test: Error - missing operand ===\n");
+    /* Test 4: Function calls */
+    test_program("Function calls",
+        "main:\n"
+        "    PUSH 10\n"
+        "    CALL double\n"
+        "    HALT\n"
+        "\n"
+        "double:\n"
+        "    DUP\n"
+        "    ADD\n"
+        "    RET\n"
+    );
+
+    /* Test 5: Complex program - countdown */
+    test_program("Countdown",
+        "; Count down from 5 to 0\n"
+        "    PUSH 5        ; initial value\n"
+        "    STORE 0       ; save counter\n"
+        "\n"
+        "loop:\n"
+        "    LOAD 0        ; load counter\n"
+        "    PUSH 1        ; decrement amount\n"
+        "    SUB           ; counter - 1\n"
+        "    DUP           ; save result\n"
+        "    STORE 0       ; save new counter\n"
+        "    JNZ loop      ; if not zero, continue\n"
+        "\n"
+        "done:\n"
+        "    HALT\n"
+    );
+
+    /* Test 6: Error - undefined label */
+    printf("\n=== Test: Error - undefined label ===\n");
     {
-        const char *source = "PUSH\n";
+        const char *source = "PUSH 5\nJMP undefined\nHALT\n";
         printf("Source:\n%s\n", source);
 
         Lexer lexer;
@@ -127,18 +153,24 @@ int main(void) {
 
         Parser parser;
         parser_init(&parser, lexer.tokens, lexer.token_count);
+        parser_parse(&parser);
 
-        if (!parser_parse(&parser)) {
-            printf("Expected error: %s\n", parser.error_msg);
+        SymbolTable symtab;
+        symtab_init(&symtab);
+        symtab_collect_labels(&symtab, lexer.tokens, lexer.token_count,
+                              parser.instructions, parser.instruction_count);
+
+        if (!symtab_resolve_labels(&symtab, parser.instructions, parser.instruction_count)) {
+            printf("Expected error: %s\n", symtab.error_msg);
         } else {
             printf("ERROR: Should have failed!\n");
         }
     }
 
-    /* Test 9: Error - unknown instruction */
-    printf("\n=== Test: Error - unknown instruction ===\n");
+    /* Test 7: Error - duplicate label */
+    printf("\n=== Test: Error - duplicate label ===\n");
     {
-        const char *source = "UNKNOWN 42\n";
+        const char *source = "start:\nPUSH 1\nstart:\nHALT\n";
         printf("Source:\n%s\n", source);
 
         Lexer lexer;
@@ -147,16 +179,21 @@ int main(void) {
 
         Parser parser;
         parser_init(&parser, lexer.tokens, lexer.token_count);
+        parser_parse(&parser);
 
-        if (!parser_parse(&parser)) {
-            printf("Expected error: %s\n", parser.error_msg);
+        SymbolTable symtab;
+        symtab_init(&symtab);
+
+        if (!symtab_collect_labels(&symtab, lexer.tokens, lexer.token_count,
+                                   parser.instructions, parser.instruction_count)) {
+            printf("Expected error: %s\n", symtab.error_msg);
         } else {
             printf("ERROR: Should have failed!\n");
         }
     }
 
     printf("\n========================================\n");
-    printf("  All parser tests completed!\n");
+    printf("  All label tests completed!\n");
     printf("========================================\n");
 
     return 0;
