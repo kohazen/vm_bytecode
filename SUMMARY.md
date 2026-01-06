@@ -173,6 +173,110 @@ STORE 2     ; M[2] = result = 16
 LOAD 2
 HALT        ; Stack: [16]
 ```
+  Assembler Labels - Day 3 Tests
+
+=== Test: Simple loop (backward jump) ===
+Source:
+loop:
+    PUSH 1
+    SUB
+    DUP
+    JNZ loop
+    HALT
+
+Parsed 5 instructions
+=== Symbol Table (1 labels) ===
+  loop                 = 0 (0x0000)  [line 1]
+
+=== Resolved Instructions ===
+[  0] addr=  0: opcode=0x01 operand=1 (0x0001)
+[  1] addr=  5: opcode=0x11
+[  2] addr=  6: opcode=0x03
+[  3] addr=  7: opcode=0x22 operand=0 (0x0000)
+[  4] addr= 12: opcode=0xFF
+Total bytecode size: 13 bytes
+
+Label resolution successful!
+
+...
+
+=== Test: Function calls ===
+Source:
+main:
+    PUSH 10
+    CALL double
+    HALT
+
+double:
+    DUP
+    ADD
+    RET
+
+Parsed 6 instructions
+=== Symbol Table (2 labels) ===
+  main                 = 0 (0x0000)  [line 1]
+  double               = 11 (0x000B)  [line 6]
+
+=== Resolved Instructions ===
+[  0] addr=  0: opcode=0x01 operand=10 (0x000A)
+[  1] addr=  5: opcode=0x40 operand=11 (0x000B)
+[  2] addr= 10: opcode=0xFF
+[  3] addr= 11: opcode=0x03
+[  4] addr= 12: opcode=0x10
+[  5] addr= 13: opcode=0x41
+Total bytecode size: 14 bytes
+
+Label resolution successful!
+
+...
+
+=== Test: Error - undefined label ===
+Source:
+PUSH 5
+JMP undefined
+HALT
+
+Expected error: Line 2: Undefined label 'undefined'
+
+=== Test: Error - duplicate label ===
+Source:
+start:
+PUSH 1
+start:
+HALT
+
+Expected error: Line 3: Label 'start' already defined on line 1
+
+  All label tests completed!
+```
+
+---
+
+## Address Calculation Example
+
+Let's trace through this program:
+
+```asm
+start:              ; Address = 0 (nothing before it)
+    PUSH 5          ; 5 bytes (opcode + 4-byte operand)
+    PUSH 1          ; 5 bytes
+loop:               ; Address = 10 (5 + 5 = 10)
+    SUB             ; 1 byte
+    DUP             ; 1 byte
+    JNZ loop        ; 5 bytes
+end:                ; Address = 17 (10 + 1 + 1 + 5 = 17)
+    HALT            ; 1 byte
+```
+
+Symbol table:
+```
+start = 0
+loop  = 10
+end   = 17
+```
+
+After resolution:
+- `JNZ loop` becomes `JNZ 10`
 
 ### Example 2: Accumulator Pattern
 
