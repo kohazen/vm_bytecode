@@ -5,9 +5,12 @@
  */
 
 #include <stdio.h>
-#include <stdint.h>
-#include "vm.h"
-#include "instructions.h"
+#include <stdlib.h>
+#include <string.h>
+#include "lexer.h"
+#include "parser.h"
+#include "labels.h"
+#include "codegen.h"
 
 /*
  * Test 1: Simple function call
@@ -173,8 +176,9 @@ void test_nested_calls(void) {
         printf("TEST FAILED!\n");
     }
 
-    vm_destroy(vm);
-}
+    /* Step 5: Generate bytecode */
+    CodeGenerator codegen;
+    codegen_init(&codegen);
 
 /*
  * Test 5: Function calling itself (simple recursion base case)
@@ -291,7 +295,7 @@ void test_double_function(void) {
         printf("TEST FAILED!\n");
     }
 
-    vm_destroy(vm);
+    return true;
 }
 
 int main(void) {
@@ -309,8 +313,16 @@ int main(void) {
     test_double_function();
 
     printf("\n========================================\n");
-    printf("  All tests completed!\n");
+    printf("  All bytecode files generated!\n");
     printf("========================================\n");
+    printf("\nGenerated files:\n");
+    printf("  test_add.bc     - Simple addition (40 + 2 = 42)\n");
+    printf("  test_expr.bc    - Expression ((5 + 3) * 2 = 16)\n");
+    printf("  test_loop.bc    - Loop (count from 3 to 0)\n");
+    printf("  test_memory.bc  - Memory (100 + 200 = 300)\n");
+    printf("  test_func.bc    - Function (10 * 2 = 20)\n");
+    printf("  test_cond.bc    - Conditional (0 → 200)\n");
+    printf("\nRun with VM: ../student1/day7/vm test_add.bc\n");
 
     return 0;
 }

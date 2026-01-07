@@ -52,6 +52,12 @@ After RET:       []               RSP = 0
 2. Push current PC onto return stack (this is where to return)
 3. Set PC = function address (jump to function)
 
+```c
+// Write a 32-bit value in little-endian
+bytes[0] = value & 0xFF;         // Least significant
+bytes[1] = (value >> 8) & 0xFF;
+bytes[2] = (value >> 16) & 0xFF;
+bytes[3] = (value >> 24) & 0xFF; // Most significant
 ```
 Before CALL 100:
     PC = 10 (at the CALL instruction)
@@ -205,106 +211,62 @@ square:
     MUL
     RET
 ```
-  Assembler Labels - Day 3 Tests
+========================================
+  Assembler Code Generator - Day 4 Tests
+========================================
 
-=== Test: Simple loop (backward jump) ===
+=== Assembling: Simple addition ===
 Source:
-loop:
-    PUSH 1
-    SUB
-    DUP
-    JNZ loop
-    HALT
+PUSH 40
+PUSH 2
+ADD
+HALT
 
-Parsed 5 instructions
-=== Symbol Table (1 labels) ===
-  loop                 = 0 (0x0000)  [line 1]
+=== Bytecode (12 bytes) ===
+Header:
+  Magic:   0xCAFEBABE
+  Version: 0x00000001
+  Size:    12 bytes
 
-=== Resolved Instructions ===
-[  0] addr=  0: opcode=0x01 operand=1 (0x0001)
-[  1] addr=  5: opcode=0x11
-[  2] addr=  6: opcode=0x03
-[  3] addr=  7: opcode=0x22 operand=0 (0x0000)
-[  4] addr= 12: opcode=0xFF
-Total bytecode size: 13 bytes
-
-Label resolution successful!
+Code (hex):
+  0000: 01 28 00 00 00 01 02 00 00 00 10 FF
+==========================
+Wrote 12 bytes to 'test_add.bc' (+ 12 byte header)
+Assembly successful!
 
 ...
 
-=== Test: Function calls ===
-Source:
-main:
-    PUSH 10
-    CALL double
-    HALT
+========================================
+  All bytecode files generated!
+========================================
 
-double:
-    DUP
-    ADD
-    RET
+Generated files:
+  test_add.bc     - Simple addition (40 + 2 = 42)
+  test_expr.bc    - Expression ((5 + 3) * 2 = 16)
+  test_loop.bc    - Loop (count from 3 to 0)
+  test_memory.bc  - Memory (100 + 200 = 300)
+  test_func.bc    - Function (10 * 2 = 20)
+  test_cond.bc    - Conditional (0 → 200)
 
-Parsed 6 instructions
-=== Symbol Table (2 labels) ===
-  main                 = 0 (0x0000)  [line 1]
-  double               = 11 (0x000B)  [line 6]
-
-=== Resolved Instructions ===
-[  0] addr=  0: opcode=0x01 operand=10 (0x000A)
-[  1] addr=  5: opcode=0x40 operand=11 (0x000B)
-[  2] addr= 10: opcode=0xFF
-[  3] addr= 11: opcode=0x03
-[  4] addr= 12: opcode=0x10
-[  5] addr= 13: opcode=0x41
-Total bytecode size: 14 bytes
-
-Label resolution successful!
-
-...
-
-=== Test: Error - undefined label ===
-Source:
-PUSH 5
-JMP undefined
-HALT
-
-Expected error: Line 2: Undefined label 'undefined'
-
-=== Test: Error - duplicate label ===
-Source:
-start:
-PUSH 1
-start:
-HALT
-
-Expected error: Line 3: Label 'start' already defined on line 1
-
-  All label tests completed!
+Run with VM: ../student1/day7/vm test_add.bc
 ```
 
 ---
 
-## Address Calculation Example
+## Bytecode Breakdown: test_add.bc
 
-Let's trace through this program:
-
+Source:
 ```asm
-start:              ; Address = 0 (nothing before it)
-    PUSH 5          ; 5 bytes (opcode + 4-byte operand)
-    PUSH 1          ; 5 bytes
-loop:               ; Address = 10 (5 + 5 = 10)
-    SUB             ; 1 byte
-    DUP             ; 1 byte
-    JNZ loop        ; 5 bytes
-end:                ; Address = 17 (10 + 1 + 1 + 5 = 17)
-    HALT            ; 1 byte
+PUSH 40
+PUSH 2
+ADD
+HALT
 ```
 
-Symbol table:
+Bytecode (hex dump):
 ```
-start = 0
-loop  = 10
-end   = 17
+00000000: BE BA FE CA  01 00 00 00  0C 00 00 00  01 28 00 00  ...............
+00000010: 00 01 02 00  00 00 10 FF                            ........
 ```
 
 After resolution:
@@ -375,19 +337,25 @@ With RETURN_STACK_SIZE = 256, you can nest up to 256 function calls. More than t
 
 ---
 
-## How to Test It
+## Common Mistakes and How to Avoid Them
 
-### Building
+### 1. Forgetting Binary Mode
+```c
+// WRONG - text mode, might corrupt on Windows
+FILE *file = fopen(filename, "w");
 
 ```bash
 cd student1/day5
 make
 ```
 
-### Running
+### 2. Wrong Byte Order
+```c
+// WRONG - big-endian
+bytes[0] = (value >> 24) & 0xFF;
 
-```bash
-./vm_test
+// CORRECT - little-endian
+bytes[0] = value & 0xFF;
 ```
 
 ### Expected Output
