@@ -57,4 +57,15 @@
 
 #define OP_HALT  0xFF   /* Stop the virtual machine */
 
+/* ============================================
+ * INSTRUCTION INFORMATION
+ * ============================================
+ *
+ * Instructions with operands (4-byte little-endian):
+ *   PUSH, JMP, JZ, JNZ, STORE, LOAD, CALL
+ *
+ * Instructions without operands:
+ *   POP, DUP, ADD, SUB, MUL, DIV, CMP, RET, HALT
+ */
+
 #endif /* INSTRUCTIONS_H */

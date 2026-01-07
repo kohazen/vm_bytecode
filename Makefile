@@ -1,59 +1,55 @@
-# Makefile for VM Day 5
+# Makefile for the Bytecode Virtual Machine
+#
+# Final version - compiles all VM components
+#
+# Targets:
+#   make        - Build the VM
+#   make clean  - Remove generated files
+#   make help   - Show available targets
+
 CC = gcc
 CFLAGS = -Wall -Wextra -g -std=c99
 
-# Object files
-OBJECTS = main.o lexer.o parser.o labels.o codegen.o assembler.o
+# All object files
+OBJECTS = main.o vm.o bytecode_loader.o
 
-# Executable
-TARGET = asm
+# The final executable
+TARGET = vm
 
-# Default target
+# Default target - build the VM
 all: $(TARGET)
 
-# Link
+# Link all object files into the final executable
 $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
 
 # Compile main.c
-main.o: main.c assembler.h
+main.o: main.c vm.h instructions.h bytecode_loader.h
 	$(CC) $(CFLAGS) -c main.c
 
-# Compile assembler.c
-assembler.o: assembler.c assembler.h lexer.h parser.h labels.h codegen.h
-	$(CC) $(CFLAGS) -c assembler.c
+# Compile vm.c
+vm.o: vm.c vm.h instructions.h
+	$(CC) $(CFLAGS) -c vm.c
 
-# Compile lexer.c
-lexer.o: lexer.c lexer.h
-	$(CC) $(CFLAGS) -c lexer.c
+# Compile bytecode_loader.c
+bytecode_loader.o: bytecode_loader.c bytecode_loader.h vm.h
+	$(CC) $(CFLAGS) -c bytecode_loader.c
 
-# Compile parser.c
-parser.o: parser.c parser.h lexer.h instructions.h
-	$(CC) $(CFLAGS) -c parser.c
-
-# Compile labels.c
-labels.o: labels.c labels.h parser.h instructions.h
-	$(CC) $(CFLAGS) -c labels.c
-
-# Compile codegen.c
-codegen.o: codegen.c codegen.h parser.h
-	$(CC) $(CFLAGS) -c codegen.c
-
-# Clean up
+# Clean up generated files
 clean:
-	rm -f $(OBJECTS) $(TARGET) *.bc
+	rm -f $(OBJECTS) $(TARGET)
 
-# Help
+# Show help
 help:
-	@echo "Assembler Makefile"
+	@echo "Virtual Machine Makefile"
 	@echo ""
 	@echo "Targets:"
-	@echo "  make          - Build the assembler"
+	@echo "  make          - Build the VM executable"
 	@echo "  make clean    - Remove compiled files"
 	@echo "  make help     - Show this help message"
 	@echo ""
 	@echo "Usage after building:"
-	@echo "  ./asm program.asm           - Assemble to program.bc"
-	@echo "  ./asm program.asm -o out.bc - Assemble to out.bc"
+	@echo "  ./vm <bytecode_file>    - Run a bytecode program"
+	@echo "  ./vm --help             - Show VM usage information"
 
 .PHONY: all clean help

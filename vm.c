@@ -1,7 +1,8 @@
 /*
  * vm.c - Virtual Machine Implementation
  *
- * Day 5: Added function calls (CALL, RET)
+ * Complete implementation of the stack-based bytecode VM.
+ * Supports all 16 instructions defined in instructions.h.
  */
 
 #include <stdio.h>
@@ -74,6 +75,7 @@ static int32_t read_int32(VM *vm) {
         return 0;
     }
 
+    /* Read 32-bit little-endian value */
     int32_t value = (int32_t)vm->code[vm->pc] |
                     ((int32_t)vm->code[vm->pc + 1] << 8) |
                     ((int32_t)vm->code[vm->pc + 2] << 16) |
@@ -119,6 +121,7 @@ void vm_destroy(VM *vm) {
         if (vm->stack) free(vm->stack);
         if (vm->memory) free(vm->memory);
         if (vm->return_stack) free(vm->return_stack);
+        if (vm->code) free(vm->code);
         free(vm);
     }
 }
@@ -304,48 +307,34 @@ static void execute_instruction(VM *vm) {
             break;
         }
 
-        /* ============================================
-         * FUNCTION CALLS (NEW IN DAY 5)
-         * ============================================ */
-
-        /* ---- CALL: Call a function ---- */
+        /* ---- CALL ---- */
         case OP_CALL: {
-            /* Read the function address */
             int32_t address = read_int32(vm);
             if (vm->error != VM_OK) { vm->running = false; return; }
 
-            /* Validate the target address */
             if (address < 0 || address >= vm->code_size) {
                 vm->error = VM_ERROR_CODE_BOUNDS;
                 vm->running = false;
                 return;
             }
 
-            /*
-             * Save the return address on the return stack.
-             * The return address is where we are NOW (after reading the operand),
-             * which is where we want to continue after RET.
-             */
+            /* Save return address (current PC after reading operand) */
             if (!return_stack_push(vm, vm->pc)) {
                 vm->running = false;
                 return;
             }
 
-            /* Jump to the function */
             vm->pc = address;
             break;
         }
 
-        /* ---- RET: Return from function ---- */
+        /* ---- RET ---- */
         case OP_RET: {
-            /* Pop the return address from the return stack */
             int32_t return_address = return_stack_pop(vm);
             if (vm->error != VM_OK) {
                 vm->running = false;
                 return;
             }
-
-            /* Jump back to the caller */
             vm->pc = return_address;
             break;
         }
@@ -422,16 +411,16 @@ void vm_dump_state(VM *vm) {
 
 const char* vm_error_string(VMError error) {
     switch (error) {
-        case VM_OK:                      return "OK";
-        case VM_ERROR_STACK_OVERFLOW:    return "Stack overflow";
-        case VM_ERROR_STACK_UNDERFLOW:   return "Stack underflow";
-        case VM_ERROR_INVALID_OPCODE:    return "Invalid opcode";
-        case VM_ERROR_DIVISION_BY_ZERO:  return "Division by zero";
-        case VM_ERROR_MEMORY_BOUNDS:     return "Memory access out of bounds";
-        case VM_ERROR_CODE_BOUNDS:       return "Code access out of bounds";
+        case VM_OK:                           return "OK";
+        case VM_ERROR_STACK_OVERFLOW:         return "Stack overflow";
+        case VM_ERROR_STACK_UNDERFLOW:        return "Stack underflow";
+        case VM_ERROR_INVALID_OPCODE:         return "Invalid opcode";
+        case VM_ERROR_DIVISION_BY_ZERO:       return "Division by zero";
+        case VM_ERROR_MEMORY_BOUNDS:          return "Memory access out of bounds";
+        case VM_ERROR_CODE_BOUNDS:            return "Code access out of bounds";
         case VM_ERROR_RETURN_STACK_OVERFLOW:  return "Return stack overflow";
         case VM_ERROR_RETURN_STACK_UNDERFLOW: return "Return stack underflow";
-        case VM_ERROR_FILE_IO:           return "File I/O error";
-        default:                         return "Unknown error";
+        case VM_ERROR_FILE_IO:                return "File I/O error";
+        default:                              return "Unknown error";
     }
 }

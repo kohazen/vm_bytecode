@@ -3,6 +3,11 @@
  *
  * This file defines what our virtual machine looks like in memory
  * and declares the functions we'll use to work with it.
+ *
+ * The VM is a stack-based machine with:
+ *   - A data stack for computations
+ *   - A return stack for function calls
+ *   - A global memory array for variables
  */
 
 #ifndef VM_H
@@ -15,9 +20,9 @@
  * CONFIGURATION CONSTANTS
  * ============================================ */
 
-#define STACK_SIZE      1024    /* Maximum items on the data stack */
-#define MEMORY_SIZE     256     /* Number of memory cells available */
-#define RETURN_STACK_SIZE 256   /* Maximum nested function calls */
+#define STACK_SIZE        1024   /* Maximum items on the data stack */
+#define MEMORY_SIZE       256    /* Number of memory cells available */
+#define RETURN_STACK_SIZE 256    /* Maximum nested function calls */
 
 /* ============================================
  * ERROR CODES
@@ -26,16 +31,16 @@
  */
 
 typedef enum {
-    VM_OK = 0,                  /* Everything is fine */
-    VM_ERROR_STACK_OVERFLOW,    /* Tried to push too many items */
-    VM_ERROR_STACK_UNDERFLOW,   /* Tried to pop from empty stack */
-    VM_ERROR_INVALID_OPCODE,    /* Unknown instruction encountered */
-    VM_ERROR_DIVISION_BY_ZERO,  /* Tried to divide by zero */
-    VM_ERROR_MEMORY_BOUNDS,     /* Invalid memory address */
-    VM_ERROR_CODE_BOUNDS,       /* Program counter went out of bounds */
-    VM_ERROR_RETURN_STACK_OVERFLOW,   /* Too many nested calls */
-    VM_ERROR_RETURN_STACK_UNDERFLOW,  /* RET without CALL */
-    VM_ERROR_FILE_IO            /* Problem reading bytecode file */
+    VM_OK = 0,                       /* Everything is fine */
+    VM_ERROR_STACK_OVERFLOW,         /* Tried to push too many items */
+    VM_ERROR_STACK_UNDERFLOW,        /* Tried to pop from empty stack */
+    VM_ERROR_INVALID_OPCODE,         /* Unknown instruction encountered */
+    VM_ERROR_DIVISION_BY_ZERO,       /* Tried to divide by zero */
+    VM_ERROR_MEMORY_BOUNDS,          /* Invalid memory address */
+    VM_ERROR_CODE_BOUNDS,            /* Program counter went out of bounds */
+    VM_ERROR_RETURN_STACK_OVERFLOW,  /* Too many nested calls */
+    VM_ERROR_RETURN_STACK_UNDERFLOW, /* RET without CALL */
+    VM_ERROR_FILE_IO                 /* Problem reading bytecode file */
 } VMError;
 
 /* ============================================
