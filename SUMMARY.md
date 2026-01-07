@@ -1,439 +1,357 @@
-# Day 3: Memory Operations
+# Day 4: Code Generator
 
 ## What We Built Today
 
-Today we added memory capabilities to our VM:
-1. **STORE** - Save a value from the stack to memory
-2. **LOAD** - Retrieve a value from memory to the stack
+Today we completed the assembler by adding the **code generator** - the final stage that takes parsed instructions and generates actual bytecode that the VM can execute.
 
-With memory, we can now store intermediate results and implement variables - essential for loops and complex programs!
+We can now:
+1. Read assembly source code
+2. Tokenize it
+3. Parse it
+4. Resolve labels
+5. Generate bytecode
+6. Write it to a `.bc` file
 
 ---
 
 ## Key Concepts Explained
 
-### Why Do We Need Memory?
+### 1. What is Code Generation?
 
-The stack is great for calculations, but it has a limitation: once you pop a value, it's gone. What if you need to use a value multiple times, or save it for later?
+Code generation is the final phase of compilation/assembly. It takes the abstract representation (parsed instructions) and produces the concrete output (bytecode bytes).
 
-**Memory** is like a set of numbered boxes where we can store values:
-- Each box has an **index** (0, 1, 2, ..., 255)
-- Each box can hold one 32-bit integer
-- Values stay in memory until we overwrite them
-
+**Input**: Parsed instructions with resolved addresses
 ```
-Memory visualization:
-
-Index:  [0]   [1]   [2]   [3]   ...  [255]
-Value:  [42]  [0]   [100] [0]   ...  [0]
+Instruction { opcode=0x01, operand=42 }  // PUSH 42
+Instruction { opcode=0x10 }               // ADD
 ```
 
-### Stack vs Memory
-
-| Feature | Stack | Memory |
-|---------|-------|--------|
-| Access | Only top element | Any index |
-| Size | Dynamic (push/pop) | Fixed (256 cells) |
-| Persistence | Pop removes value | Stays until overwritten |
-| Use case | Calculations | Variables, storage |
-
-### STORE Instruction
-
-**Opcode**: 0x30
-**Format**: 1 byte opcode + 4 bytes index (5 bytes total)
-
-**What it does**:
-1. Read the memory index from bytecode
-2. Pop a value from the stack
-3. Store that value at memory[index]
-
+**Output**: Raw bytes
 ```
-Before STORE 0:
-    Stack: [42]     Memory[0]: 0
-
-After STORE 0:
-    Stack: []       Memory[0]: 42
+01 2A 00 00 00 10
 ```
 
-**Important**: STORE consumes (pops) the value from the stack!
+### 2. The Bytecode File Format
 
-### LOAD Instruction
-
-**Opcode**: 0x31
-**Format**: 1 byte opcode + 4 bytes index (5 bytes total)
-
-**What it does**:
-1. Read the memory index from bytecode
-2. Read the value from memory[index]
-3. Push that value onto the stack
+Our bytecode files have this structure:
 
 ```
-Before LOAD 0:
-    Stack: []       Memory[0]: 42
-
-After LOAD 0:
-    Stack: [42]     Memory[0]: 42  (unchanged)
++------------------------+
+| Header (12 bytes)      |
+|------------------------|
+| Magic:   0xCAFEBABE    |  4 bytes, little-endian
+| Version: 0x00000001    |  4 bytes, little-endian
+| Size:    N             |  4 bytes, little-endian
++------------------------+
+| Code (N bytes)         |
+|------------------------|
+| opcode1 [operand1]     |
+| opcode2 [operand2]     |
+| ...                    |
++------------------------+
 ```
 
-**Important**: LOAD doesn't remove the value from memory - you can load the same memory location multiple times!
+### 3. Little-Endian Encoding
+
+Multi-byte values are stored with the least significant byte first:
+
+**Value**: `0x12345678`
+
+**Little-endian**: `78 56 34 12`
+
+This matches x86/x64 processors and is what our VM expects.
+
+```c
+// Write a 32-bit value in little-endian
+bytes[0] = value & 0xFF;         // Least significant
+bytes[1] = (value >> 8) & 0xFF;
+bytes[2] = (value >> 16) & 0xFF;
+bytes[3] = (value >> 24) & 0xFF; // Most significant
+```
+
+### 4. Instruction Encoding
+
+Each instruction becomes 1 or 5 bytes:
+
+**No operand** (1 byte):
+```
+ADD → 10
+```
+
+**With operand** (5 bytes):
+```
+PUSH 42 → 01 2A 00 00 00
+           │  └──────────── 42 in little-endian (0x0000002A)
+           └─────────────── opcode for PUSH
+```
+
+### 5. Binary File I/O
+
+Writing binary files in C:
+
+```c
+// Open in binary write mode
+FILE *file = fopen("output.bc", "wb");
+
+// Write raw bytes
+uint8_t data[] = {0x01, 0x02, 0x03};
+fwrite(data, 1, 3, file);
+
+// Always close
+fclose(file);
+```
+
+The `"wb"` mode is crucial:
+- `w` = write (create/overwrite)
+- `b` = binary (don't translate line endings)
 
 ---
 
 ## How the Code Works
 
-### STORE Implementation
+### Generating Bytecode
 
 ```c
-case OP_STORE: {
-    /* Read the memory index from bytecode */
-    int32_t index = read_int32(vm);
-    if (vm->error != VM_OK) { vm->running = false; return; }
+bool codegen_generate(CodeGenerator *gen, ParsedInstruction *instructions,
+                      int instruction_count) {
+    for (each instruction) {
+        // Emit the opcode
+        emit_byte(gen, inst->opcode);
 
-    /* Check bounds - is the index valid? */
-    if (index < 0 || index >= MEMORY_SIZE) {
-        vm->error = VM_ERROR_MEMORY_BOUNDS;
-        vm->running = false;
-        return;
+        // Emit operand if present
+        if (inst->has_operand) {
+            emit_int32(gen, inst->operand);
+        }
     }
-
-    /* Pop value from stack */
-    int32_t value = stack_pop(vm);
-    if (vm->error != VM_OK) { vm->running = false; return; }
-
-    /* Store in memory */
-    vm->memory[index] = value;
-    break;
 }
 ```
 
-### LOAD Implementation
+### Emitting Little-Endian Values
 
 ```c
-case OP_LOAD: {
-    /* Read the memory index from bytecode */
-    int32_t index = read_int32(vm);
-    if (vm->error != VM_OK) { vm->running = false; return; }
-
-    /* Check bounds */
-    if (index < 0 || index >= MEMORY_SIZE) {
-        vm->error = VM_ERROR_MEMORY_BOUNDS;
-        vm->running = false;
-        return;
-    }
-
-    /* Push value from memory onto stack */
-    if (!stack_push(vm, vm->memory[index])) {
-        vm->running = false;
-    }
-    break;
+static bool emit_int32(CodeGenerator *gen, int32_t value) {
+    emit_byte(gen, value & 0xFF);
+    emit_byte(gen, (value >> 8) & 0xFF);
+    emit_byte(gen, (value >> 16) & 0xFF);
+    emit_byte(gen, (value >> 24) & 0xFF);
 }
 ```
 
-### Memory Bounds Checking
-
-Why do we check bounds?
+### Writing the File
 
 ```c
-if (index < 0 || index >= MEMORY_SIZE)
-```
+bool codegen_write_file(CodeGenerator *gen, const char *filename) {
+    FILE *file = fopen(filename, "wb");
 
-Without this check, if someone tries `LOAD 1000`:
-- We'd read beyond our allocated array
-- Could crash or return garbage
-- Security vulnerability!
+    // Write header
+    write_uint32(file, BYTECODE_MAGIC);    // 0xCAFEBABE
+    write_uint32(file, BYTECODE_VERSION);  // 0x00000001
+    write_uint32(file, gen->bytecode_size);
 
-With bounds checking, we report a clean error.
+    // Write code
+    fwrite(gen->bytecode, 1, gen->bytecode_size, file);
 
----
-
-## Practical Examples
-
-### Example 1: Using Memory as a Variable
-
-Calculate `x = 5; y = x + 3; result = y * 2`
-
-```assembly
-; x = 5
-PUSH 5
-STORE 0     ; M[0] = x = 5
-
-; y = x + 3
-LOAD 0      ; push x (5)
-PUSH 3
-ADD         ; 5 + 3 = 8
-STORE 1     ; M[1] = y = 8
-
-; result = y * 2
-LOAD 1      ; push y (8)
-PUSH 2
-MUL         ; 8 * 2 = 16
-STORE 2     ; M[2] = result = 16
-
-; Push final result
-LOAD 2
-HALT        ; Stack: [16]
-```
-  Assembler Labels - Day 3 Tests
-
-=== Test: Simple loop (backward jump) ===
-Source:
-loop:
-    PUSH 1
-    SUB
-    DUP
-    JNZ loop
-    HALT
-
-Parsed 5 instructions
-=== Symbol Table (1 labels) ===
-  loop                 = 0 (0x0000)  [line 1]
-
-=== Resolved Instructions ===
-[  0] addr=  0: opcode=0x01 operand=1 (0x0001)
-[  1] addr=  5: opcode=0x11
-[  2] addr=  6: opcode=0x03
-[  3] addr=  7: opcode=0x22 operand=0 (0x0000)
-[  4] addr= 12: opcode=0xFF
-Total bytecode size: 13 bytes
-
-Label resolution successful!
-
-...
-
-=== Test: Function calls ===
-Source:
-main:
-    PUSH 10
-    CALL double
-    HALT
-
-double:
-    DUP
-    ADD
-    RET
-
-Parsed 6 instructions
-=== Symbol Table (2 labels) ===
-  main                 = 0 (0x0000)  [line 1]
-  double               = 11 (0x000B)  [line 6]
-
-=== Resolved Instructions ===
-[  0] addr=  0: opcode=0x01 operand=10 (0x000A)
-[  1] addr=  5: opcode=0x40 operand=11 (0x000B)
-[  2] addr= 10: opcode=0xFF
-[  3] addr= 11: opcode=0x03
-[  4] addr= 12: opcode=0x10
-[  5] addr= 13: opcode=0x41
-Total bytecode size: 14 bytes
-
-Label resolution successful!
-
-...
-
-=== Test: Error - undefined label ===
-Source:
-PUSH 5
-JMP undefined
-HALT
-
-Expected error: Line 2: Undefined label 'undefined'
-
-=== Test: Error - duplicate label ===
-Source:
-start:
-PUSH 1
-start:
-HALT
-
-Expected error: Line 3: Label 'start' already defined on line 1
-
-  All label tests completed!
+    fclose(file);
+}
 ```
 
 ---
 
-## Address Calculation Example
+## How to Test
 
-Let's trace through this program:
-
-```asm
-start:              ; Address = 0 (nothing before it)
-    PUSH 5          ; 5 bytes (opcode + 4-byte operand)
-    PUSH 1          ; 5 bytes
-loop:               ; Address = 10 (5 + 5 = 10)
-    SUB             ; 1 byte
-    DUP             ; 1 byte
-    JNZ loop        ; 5 bytes
-end:                ; Address = 17 (10 + 1 + 1 + 5 = 17)
-    HALT            ; 1 byte
-```
-
-Symbol table:
-```
-start = 0
-loop  = 10
-end   = 17
-```
-
-After resolution:
-- `JNZ loop` becomes `JNZ 10`
-
-### Example 2: Accumulator Pattern
-
-Sum numbers using a memory location as accumulator:
-
-```assembly
-; sum = 0
-PUSH 0
-STORE 0
-
-; sum += 10
-LOAD 0      ; load current sum
-PUSH 10
-ADD
-STORE 0     ; save new sum
-
-; sum += 20
-LOAD 0
-PUSH 20
-ADD
-STORE 0
-
-; sum += 30
-LOAD 0
-PUSH 30
-ADD
-STORE 0
-
-; Result
-LOAD 0      ; Stack: [60]
-HALT
-```
-
-This pattern is the foundation for loops (Day 4)!
-
-### Example 3: Swapping Two Values
-
-Swap M[0] and M[1] using M[2] as temporary storage:
-
-```assembly
-; Initial: M[0] = 5, M[1] = 10
-PUSH 5
-STORE 0
-PUSH 10
-STORE 1
-
-; Swap using temp
-LOAD 0      ; temp = M[0]
-STORE 2     ; M[2] = temp (5)
-LOAD 1      ; get M[1]
-STORE 0     ; M[0] = M[1] (10)
-LOAD 2      ; get temp
-STORE 1     ; M[1] = temp (5)
-
-; Now: M[0] = 10, M[1] = 5
-HALT
-```
-
----
-
-## Memory Initialization
-
-When the VM starts (or loads a new program):
-- All 256 memory cells are set to 0
-- This is done in `vm_load_program()`
-
-```c
-memset(vm->memory, 0, MEMORY_SIZE * sizeof(int32_t));
-```
-
-This means:
-- You can safely LOAD from any address (you'll get 0)
-- You don't need to initialize variables to 0 first
-
----
-
-## How to Test It
-
-### Building
-
+### Compile
 ```bash
-cd student1/day3
+make clean
 make
 ```
 
-### Running
-
+### Run Tests (generates bytecode files)
 ```bash
-./vm_test
+./asm_test
 ```
 
-### Expected Output
+### View Generated Files
+```bash
+hexdump -C test_add.bc
+```
 
-8 tests covering:
-1. Basic STORE and LOAD
-2. Multiple memory locations
-3. Accumulator pattern (sum)
-4. Last valid index (255)
-5. STORE out of bounds error
-6. LOAD out of bounds error
-7. Memory initialized to zero
-8. Swap using memory
-
-All tests should pass!
+### Run on VM (if available)
+```bash
+../../student1/day7/vm test_add.bc
+```
 
 ---
 
-## Common Mistakes
+## Expected Output
 
-### 1. Forgetting STORE Pops the Stack
+```
+========================================
+  Assembler Code Generator - Day 4 Tests
+========================================
 
-```assembly
-PUSH 42
-STORE 0     ; Stack is now EMPTY!
-ADD         ; ERROR: Stack underflow!
+=== Assembling: Simple addition ===
+Source:
+PUSH 40
+PUSH 2
+ADD
+HALT
+
+=== Bytecode (12 bytes) ===
+Header:
+  Magic:   0xCAFEBABE
+  Version: 0x00000001
+  Size:    12 bytes
+
+Code (hex):
+  0000: 01 28 00 00 00 01 02 00 00 00 10 FF
+==========================
+Wrote 12 bytes to 'test_add.bc' (+ 12 byte header)
+Assembly successful!
+
+...
+
+========================================
+  All bytecode files generated!
+========================================
+
+Generated files:
+  test_add.bc     - Simple addition (40 + 2 = 42)
+  test_expr.bc    - Expression ((5 + 3) * 2 = 16)
+  test_loop.bc    - Loop (count from 3 to 0)
+  test_memory.bc  - Memory (100 + 200 = 300)
+  test_func.bc    - Function (10 * 2 = 20)
+  test_cond.bc    - Conditional (0 → 200)
+
+Run with VM: ../student1/day7/vm test_add.bc
 ```
 
-After STORE, the value is gone from the stack. If you need it again, LOAD it back.
+---
 
-### 2. Wrong Index Encoding
+## Bytecode Breakdown: test_add.bc
 
-Memory index is 4 bytes in little-endian:
-- Index 0: `00 00 00 00`
-- Index 1: `01 00 00 00`
-- Index 255: `FF 00 00 00`
-- Index 256: `00 01 00 00` (out of bounds!)
+Source:
+```asm
+PUSH 40
+PUSH 2
+ADD
+HALT
+```
 
-### 3. Not Checking for Errors
+Bytecode (hex dump):
+```
+00000000: BE BA FE CA  01 00 00 00  0C 00 00 00  01 28 00 00  ...............
+00000010: 00 01 02 00  00 00 10 FF                            ........
+```
 
-Both STORE and LOAD can fail:
-- STORE needs a value on the stack (underflow possible)
-- Both can have invalid indices (bounds error)
+Breakdown:
+```
+BE BA FE CA     Magic number (0xCAFEBABE in little-endian)
+01 00 00 00     Version (1)
+0C 00 00 00     Code size (12 bytes)
+01 28 00 00 00  PUSH 40 (opcode 0x01, operand 40 = 0x28)
+01 02 00 00 00  PUSH 2  (opcode 0x01, operand 2)
+10              ADD     (opcode 0x10)
+FF              HALT    (opcode 0xFF)
+```
 
-### 4. Assuming Memory Persists Across Runs
+---
 
-When you load a new program, memory is reset to zeros. Don't assume values from a previous run are still there.
+## The Complete Assembly Pipeline
+
+```
+Source Code (.asm)
+       │
+       ▼
+   [Lexer]  ──────────────►  Tokens
+       │
+       ▼
+   [Parser] ──────────────►  Parsed Instructions
+       │
+       ▼
+[Label Collector] ────────►  Symbol Table
+       │
+       ▼
+[Label Resolver] ─────────►  Resolved Instructions
+       │
+       ▼
+[Code Generator] ─────────►  Bytecode
+       │
+       ▼
+[File Writer] ────────────►  .bc File
+```
+
+---
+
+## Common Mistakes and How to Avoid Them
+
+### 1. Forgetting Binary Mode
+```c
+// WRONG - text mode, might corrupt on Windows
+FILE *file = fopen(filename, "w");
+
+// CORRECT - binary mode
+FILE *file = fopen(filename, "wb");
+```
+
+### 2. Wrong Byte Order
+```c
+// WRONG - big-endian
+bytes[0] = (value >> 24) & 0xFF;
+
+// CORRECT - little-endian
+bytes[0] = value & 0xFF;
+```
+
+### 3. Not Checking Write Errors
+```c
+// WRONG - assumes write succeeds
+fwrite(data, 1, size, file);
+
+// CORRECT - check return value
+if (fwrite(data, 1, size, file) != size) {
+    // Handle error
+}
+```
+
+### 4. Unresolved Labels
+The code generator should never see unresolved label references. If it does, something went wrong in an earlier stage:
+```c
+if (inst->is_label_ref) {
+    // This is a bug - labels should be resolved already
+    error("Unresolved label");
+}
+```
+
+---
+
+## What's Next?
+
+Tomorrow (Day 5) we'll:
+1. Add proper error handling throughout
+2. Create a command-line interface (CLI)
+3. Make the assembler a proper standalone tool
 
 ---
 
 ## Files in This Day
 
-| File | Purpose |
-|------|---------|
-| `instructions.h` | Same opcode definitions |
-| `vm.h` | Same VM structure |
-| `vm.c` | VM with memory operations added |
-| `main.c` | Tests for memory operations |
-| `Makefile` | Build instructions |
-| `SUMMARY.md` | This explanation file |
+| File | Lines | Purpose |
+|------|-------|---------|
+| `instructions.h` | ~60 | Opcode definitions |
+| `lexer.h/.c` | ~270 | Tokenization |
+| `parser.h/.c` | ~250 | Parsing |
+| `labels.h/.c` | ~190 | Label resolution |
+| `codegen.h` | ~45 | Code generator interface |
+| `codegen.c` | ~120 | Code generation |
+| `main.c` | ~140 | Test program |
+| `Makefile` | ~45 | Build configuration |
 
 ---
 
-## What's Next (Day 4)
+## Key Takeaways
 
-Tomorrow we'll add control flow:
-- **JMP** - Unconditional jump (goto)
-- **JZ** - Jump if zero (conditional)
-- **JNZ** - Jump if not zero (conditional)
-
-With memory + jumps, we can finally implement loops!
+1. **Code generation is the final step** - turns abstract representation into bytes
+2. **Little-endian matters** - must match what the VM expects
+3. **File format includes header** - magic number, version, size
+4. **Binary mode is essential** - prevents line ending translation
+5. **Always verify output** - use hexdump to check generated files

@@ -1,319 +1,173 @@
 /*
- * main.c - Test Harness for the Virtual Machine (Day 3)
+ * main.c - Code Generator Test Program
  *
- * Tests memory operations: STORE, LOAD
+ * Day 4: Test the complete assembly pipeline.
  */
 
 #include <stdio.h>
-#include <stdint.h>
-#include "vm.h"
-#include "instructions.h"
+#include <stdlib.h>
+#include <string.h>
+#include "lexer.h"
+#include "parser.h"
+#include "labels.h"
+#include "codegen.h"
 
 /*
- * Test 1: Simple STORE and LOAD
- * Program: PUSH 42, STORE 0, LOAD 0, HALT
- * Expected: 42 on stack, memory[0] = 42
+ * Assemble a program and write to file.
  */
-void test_store_load(void) {
-    printf("\n=== Test 1: STORE and LOAD ===\n");
+static bool assemble_program(const char *name, const char *source,
+                             const char *output_file) {
+    printf("\n=== Assembling: %s ===\n", name);
+    printf("Source:\n%s\n", source);
 
-    uint8_t program[] = {
-        OP_PUSH, 0x2A, 0x00, 0x00, 0x00,   /* PUSH 42 */
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* STORE 0 (memory[0] = 42) */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* LOAD 0 (push memory[0]) */
-        OP_HALT
-    };
+    /* Step 1: Tokenize */
+    Lexer lexer;
+    lexer_init(&lexer, source);
 
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: PUSH 42, STORE 0, LOAD 0, HALT\n");
-    printf("Expected: Stack = [42], Memory[0] = 42\n");
-    vm_dump_state(vm);
-
-    if (result == VM_OK && vm->sp == 1 && vm->stack[0] == 42 && vm->memory[0] == 42) {
-        printf("TEST PASSED!\n");
-    } else {
-        printf("TEST FAILED!\n");
+    if (!lexer_tokenize(&lexer)) {
+        printf("Lexer error: %s\n", lexer.error_msg);
+        return false;
     }
 
-    vm_destroy(vm);
-}
+    /* Step 2: Parse */
+    Parser parser;
+    parser_init(&parser, lexer.tokens, lexer.token_count);
 
-/*
- * Test 2: Multiple memory locations
- * Store values at different addresses, then load them back
- */
-void test_multiple_memory(void) {
-    printf("\n=== Test 2: Multiple Memory Locations ===\n");
-
-    uint8_t program[] = {
-        OP_PUSH, 0x0A, 0x00, 0x00, 0x00,   /* PUSH 10 */
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* STORE 0 */
-        OP_PUSH, 0x14, 0x00, 0x00, 0x00,   /* PUSH 20 */
-        OP_STORE, 0x01, 0x00, 0x00, 0x00,  /* STORE 1 */
-        OP_PUSH, 0x1E, 0x00, 0x00, 0x00,   /* PUSH 30 */
-        OP_STORE, 0x02, 0x00, 0x00, 0x00,  /* STORE 2 */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* LOAD 0 (push 10) */
-        OP_LOAD, 0x01, 0x00, 0x00, 0x00,   /* LOAD 1 (push 20) */
-        OP_LOAD, 0x02, 0x00, 0x00, 0x00,   /* LOAD 2 (push 30) */
-        OP_HALT
-    };
-
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: Store 10,20,30 at M[0],M[1],M[2], then load them all\n");
-    printf("Expected: Stack = [10, 20, 30]\n");
-    vm_dump_state(vm);
-
-    if (result == VM_OK && vm->sp == 3 &&
-        vm->stack[0] == 10 && vm->stack[1] == 20 && vm->stack[2] == 30) {
-        printf("TEST PASSED!\n");
-    } else {
-        printf("TEST FAILED!\n");
+    if (!parser_parse(&parser)) {
+        printf("Parser error: %s\n", parser.error_msg);
+        return false;
     }
 
-    vm_destroy(vm);
-}
+    /* Step 3: Collect labels */
+    SymbolTable symtab;
+    symtab_init(&symtab);
 
-/*
- * Test 3: Memory as accumulator
- * Calculate 10 + 20 + 30 using memory to store intermediate result
- */
-void test_memory_accumulator(void) {
-    printf("\n=== Test 3: Memory as Accumulator ===\n");
-
-    uint8_t program[] = {
-        /* sum = 0 */
-        OP_PUSH, 0x00, 0x00, 0x00, 0x00,   /* PUSH 0 */
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* STORE 0 (sum = 0) */
-
-        /* sum = sum + 10 */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* LOAD 0 (push sum) */
-        OP_PUSH, 0x0A, 0x00, 0x00, 0x00,   /* PUSH 10 */
-        OP_ADD,                              /* ADD */
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* STORE 0 (save sum) */
-
-        /* sum = sum + 20 */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* LOAD 0 */
-        OP_PUSH, 0x14, 0x00, 0x00, 0x00,   /* PUSH 20 */
-        OP_ADD,
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* STORE 0 */
-
-        /* sum = sum + 30 */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* LOAD 0 */
-        OP_PUSH, 0x1E, 0x00, 0x00, 0x00,   /* PUSH 30 */
-        OP_ADD,
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* STORE 0 */
-
-        /* Push final result */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* LOAD 0 */
-        OP_HALT
-    };
-
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: sum = 0 + 10 + 20 + 30 (using memory)\n");
-    printf("Expected: Stack = [60]\n");
-    vm_dump_state(vm);
-
-    if (result == VM_OK && vm->sp == 1 && vm->stack[0] == 60) {
-        printf("TEST PASSED!\n");
-    } else {
-        printf("TEST FAILED!\n");
+    if (!symtab_collect_labels(&symtab, lexer.tokens, lexer.token_count,
+                               parser.instructions, parser.instruction_count)) {
+        printf("Label collection error: %s\n", symtab.error_msg);
+        return false;
     }
 
-    vm_destroy(vm);
-}
-
-/*
- * Test 4: Memory bounds check - valid edge case
- * Store at memory[255] (last valid index)
- */
-void test_memory_last_index(void) {
-    printf("\n=== Test 4: Last Valid Memory Index ===\n");
-
-    uint8_t program[] = {
-        OP_PUSH, 0x63, 0x00, 0x00, 0x00,   /* PUSH 99 */
-        OP_STORE, 0xFF, 0x00, 0x00, 0x00,  /* STORE 255 */
-        OP_LOAD, 0xFF, 0x00, 0x00, 0x00,   /* LOAD 255 */
-        OP_HALT
-    };
-
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: PUSH 99, STORE 255, LOAD 255, HALT\n");
-    printf("Expected: Stack = [99]\n");
-    vm_dump_state(vm);
-
-    if (result == VM_OK && vm->sp == 1 && vm->stack[0] == 99) {
-        printf("TEST PASSED!\n");
-    } else {
-        printf("TEST FAILED!\n");
+    /* Step 4: Resolve labels */
+    if (!symtab_resolve_labels(&symtab, parser.instructions, parser.instruction_count)) {
+        printf("Label resolution error: %s\n", symtab.error_msg);
+        return false;
     }
 
-    vm_destroy(vm);
-}
+    /* Step 5: Generate bytecode */
+    CodeGenerator codegen;
+    codegen_init(&codegen);
 
-/*
- * Test 5: Memory bounds error - store out of bounds
- * Try to STORE at index 256 (out of bounds)
- */
-void test_memory_store_bounds_error(void) {
-    printf("\n=== Test 5: STORE Out of Bounds ===\n");
-
-    uint8_t program[] = {
-        OP_PUSH, 0x2A, 0x00, 0x00, 0x00,   /* PUSH 42 */
-        OP_STORE, 0x00, 0x01, 0x00, 0x00,  /* STORE 256 (0x100 - out of bounds!) */
-        OP_HALT
-    };
-
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: PUSH 42, STORE 256 (invalid!)\n");
-    printf("Expected: Error - Memory bounds\n");
-    vm_dump_state(vm);
-
-    if (result == VM_ERROR_MEMORY_BOUNDS) {
-        printf("TEST PASSED! (Correctly detected bounds error)\n");
-    } else {
-        printf("TEST FAILED!\n");
+    if (!codegen_generate(&codegen, parser.instructions, parser.instruction_count)) {
+        printf("Code generation error: %s\n", codegen.error_msg);
+        return false;
     }
 
-    vm_destroy(vm);
-}
+    codegen_print_bytecode(&codegen);
 
-/*
- * Test 6: Memory bounds error - load out of bounds
- * Try to LOAD from index 300
- */
-void test_memory_load_bounds_error(void) {
-    printf("\n=== Test 6: LOAD Out of Bounds ===\n");
-
-    uint8_t program[] = {
-        OP_LOAD, 0x2C, 0x01, 0x00, 0x00,   /* LOAD 300 (0x12C - out of bounds!) */
-        OP_HALT
-    };
-
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: LOAD 300 (invalid!)\n");
-    printf("Expected: Error - Memory bounds\n");
-    vm_dump_state(vm);
-
-    if (result == VM_ERROR_MEMORY_BOUNDS) {
-        printf("TEST PASSED! (Correctly detected bounds error)\n");
-    } else {
-        printf("TEST FAILED!\n");
+    /* Step 6: Write to file */
+    if (!codegen_write_file(&codegen, output_file)) {
+        printf("File write error: %s\n", codegen.error_msg);
+        return false;
     }
 
-    vm_destroy(vm);
-}
+    printf("Wrote %d bytes to '%s' (+ 12 byte header)\n",
+           codegen.bytecode_size, output_file);
+    printf("Assembly successful!\n");
 
-/*
- * Test 7: Memory initialized to zero
- * Load from uninitialized memory
- */
-void test_memory_zero_init(void) {
-    printf("\n=== Test 7: Memory Initialized to Zero ===\n");
-
-    uint8_t program[] = {
-        OP_LOAD, 0x64, 0x00, 0x00, 0x00,   /* LOAD 100 (never written) */
-        OP_HALT
-    };
-
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: LOAD 100 (from uninitialized memory)\n");
-    printf("Expected: Stack = [0]\n");
-    vm_dump_state(vm);
-
-    if (result == VM_OK && vm->sp == 1 && vm->stack[0] == 0) {
-        printf("TEST PASSED!\n");
-    } else {
-        printf("TEST FAILED!\n");
-    }
-
-    vm_destroy(vm);
-}
-
-/*
- * Test 8: Swap two values using memory
- * Swap values at M[0] and M[1]
- */
-void test_swap_with_memory(void) {
-    printf("\n=== Test 8: Swap Using Memory ===\n");
-
-    uint8_t program[] = {
-        /* Store A=5 at M[0], B=10 at M[1] */
-        OP_PUSH, 0x05, 0x00, 0x00, 0x00,   /* PUSH 5 */
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* M[0] = 5 */
-        OP_PUSH, 0x0A, 0x00, 0x00, 0x00,   /* PUSH 10 */
-        OP_STORE, 0x01, 0x00, 0x00, 0x00,  /* M[1] = 10 */
-
-        /* Swap: temp = M[0]; M[0] = M[1]; M[1] = temp */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* Load M[0] (5) -> temp */
-        OP_STORE, 0x02, 0x00, 0x00, 0x00,  /* M[2] = 5 (temp) */
-        OP_LOAD, 0x01, 0x00, 0x00, 0x00,   /* Load M[1] (10) */
-        OP_STORE, 0x00, 0x00, 0x00, 0x00,  /* M[0] = 10 */
-        OP_LOAD, 0x02, 0x00, 0x00, 0x00,   /* Load temp (5) */
-        OP_STORE, 0x01, 0x00, 0x00, 0x00,  /* M[1] = 5 */
-
-        /* Push swapped values to verify */
-        OP_LOAD, 0x00, 0x00, 0x00, 0x00,   /* Push M[0] (should be 10) */
-        OP_LOAD, 0x01, 0x00, 0x00, 0x00,   /* Push M[1] (should be 5) */
-        OP_HALT
-    };
-
-    VM *vm = vm_create();
-    vm_load_program(vm, program, sizeof(program));
-    VMError result = vm_run(vm);
-
-    printf("Program: Swap M[0]=5 and M[1]=10 using M[2] as temp\n");
-    printf("Expected: Stack = [10, 5] (swapped!)\n");
-    vm_dump_state(vm);
-
-    if (result == VM_OK && vm->sp == 2 &&
-        vm->stack[0] == 10 && vm->stack[1] == 5) {
-        printf("TEST PASSED!\n");
-    } else {
-        printf("TEST FAILED!\n");
-    }
-
-    vm_destroy(vm);
+    return true;
 }
 
 int main(void) {
     printf("========================================\n");
-    printf("  Virtual Machine - Day 3 Tests\n");
-    printf("  Testing: STORE, LOAD\n");
+    printf("  Assembler Code Generator - Day 4 Tests\n");
     printf("========================================\n");
 
-    test_store_load();
-    test_multiple_memory();
-    test_memory_accumulator();
-    test_memory_last_index();
-    test_memory_store_bounds_error();
-    test_memory_load_bounds_error();
-    test_memory_zero_init();
-    test_swap_with_memory();
+    /* Test 1: Simple addition */
+    assemble_program("Simple addition",
+        "PUSH 40\n"
+        "PUSH 2\n"
+        "ADD\n"
+        "HALT\n",
+        "test_add.bc"
+    );
+
+    /* Test 2: Arithmetic expression: (5 + 3) * 2 = 16 */
+    assemble_program("Arithmetic expression",
+        "; Calculate (5 + 3) * 2 = 16\n"
+        "PUSH 5\n"
+        "PUSH 3\n"
+        "ADD\n"
+        "PUSH 2\n"
+        "MUL\n"
+        "HALT\n",
+        "test_expr.bc"
+    );
+
+    /* Test 3: Loop (count down from 3) */
+    assemble_program("Loop",
+        "    PUSH 3        ; counter\n"
+        "loop:\n"
+        "    PUSH 1\n"
+        "    SUB           ; counter - 1\n"
+        "    DUP\n"
+        "    JNZ loop      ; repeat if not zero\n"
+        "    HALT\n",
+        "test_loop.bc"
+    );
+
+    /* Test 4: Memory operations */
+    assemble_program("Memory operations",
+        "PUSH 100\n"
+        "STORE 0\n"
+        "PUSH 200\n"
+        "STORE 1\n"
+        "LOAD 0\n"
+        "LOAD 1\n"
+        "ADD\n"
+        "HALT\n",
+        "test_memory.bc"
+    );
+
+    /* Test 5: Function call */
+    assemble_program("Function call",
+        "; Main: push 10, call double, halt\n"
+        "    PUSH 10\n"
+        "    CALL double\n"
+        "    HALT\n"
+        "\n"
+        "; Double function: duplicates and adds\n"
+        "double:\n"
+        "    DUP\n"
+        "    ADD\n"
+        "    RET\n",
+        "test_func.bc"
+    );
+
+    /* Test 6: Conditional jump */
+    assemble_program("Conditional jump",
+        "    PUSH 0        ; test value\n"
+        "    JZ is_zero    ; jump if zero\n"
+        "    PUSH 100      ; not zero path\n"
+        "    JMP done\n"
+        "is_zero:\n"
+        "    PUSH 200      ; zero path\n"
+        "done:\n"
+        "    HALT\n",
+        "test_cond.bc"
+    );
 
     printf("\n========================================\n");
-    printf("  All tests completed!\n");
+    printf("  All bytecode files generated!\n");
     printf("========================================\n");
+    printf("\nGenerated files:\n");
+    printf("  test_add.bc     - Simple addition (40 + 2 = 42)\n");
+    printf("  test_expr.bc    - Expression ((5 + 3) * 2 = 16)\n");
+    printf("  test_loop.bc    - Loop (count from 3 to 0)\n");
+    printf("  test_memory.bc  - Memory (100 + 200 = 300)\n");
+    printf("  test_func.bc    - Function (10 * 2 = 20)\n");
+    printf("  test_cond.bc    - Conditional (0 → 200)\n");
+    printf("\nRun with VM: ../student1/day7/vm test_add.bc\n");
 
     return 0;
 }
