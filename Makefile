@@ -1,7 +1,4 @@
-# Makefile for Day 5 - Complete Assembler
-#
-# Compiles the assembler with CLI.
-
+# Makefile for VM Day 5
 CC = gcc
 CFLAGS = -Wall -Wextra -g -std=c99
 

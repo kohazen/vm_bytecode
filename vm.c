@@ -1,7 +1,7 @@
 /*
  * vm.c - Virtual Machine Implementation
  *
- * Day 3: Added memory operations (STORE, LOAD)
+ * Day 5: Added function calls (CALL, RET)
  */
 
 #include <stdio.h>
@@ -42,6 +42,29 @@ static int32_t stack_peek(VM *vm) {
 }
 
 /* ============================================
+ * HELPER FUNCTIONS - Return Stack Operations
+ * ============================================ */
+
+static bool return_stack_push(VM *vm, int32_t value) {
+    if (vm->rsp >= RETURN_STACK_SIZE) {
+        vm->error = VM_ERROR_RETURN_STACK_OVERFLOW;
+        return false;
+    }
+    vm->return_stack[vm->rsp] = value;
+    vm->rsp++;
+    return true;
+}
+
+static int32_t return_stack_pop(VM *vm) {
+    if (vm->rsp <= 0) {
+        vm->error = VM_ERROR_RETURN_STACK_UNDERFLOW;
+        return 0;
+    }
+    vm->rsp--;
+    return vm->return_stack[vm->rsp];
+}
+
+/* ============================================
  * HELPER FUNCTIONS - Reading from Bytecode
  * ============================================ */
 
@@ -68,25 +91,13 @@ VM* vm_create(void) {
     if (!vm) return NULL;
 
     vm->stack = (int32_t*)malloc(STACK_SIZE * sizeof(int32_t));
-    if (!vm->stack) {
-        free(vm);
-        return NULL;
-    }
+    if (!vm->stack) { free(vm); return NULL; }
 
     vm->memory = (int32_t*)malloc(MEMORY_SIZE * sizeof(int32_t));
-    if (!vm->memory) {
-        free(vm->stack);
-        free(vm);
-        return NULL;
-    }
+    if (!vm->memory) { free(vm->stack); free(vm); return NULL; }
 
     vm->return_stack = (int32_t*)malloc(RETURN_STACK_SIZE * sizeof(int32_t));
-    if (!vm->return_stack) {
-        free(vm->memory);
-        free(vm->stack);
-        free(vm);
-        return NULL;
-    }
+    if (!vm->return_stack) { free(vm->memory); free(vm->stack); free(vm); return NULL; }
 
     memset(vm->stack, 0, STACK_SIZE * sizeof(int32_t));
     memset(vm->memory, 0, MEMORY_SIZE * sizeof(int32_t));
@@ -120,10 +131,7 @@ VMError vm_load_program(VM *vm, uint8_t *bytecode, int size) {
     vm->rsp = 0;
     vm->running = false;
     vm->error = VM_OK;
-
-    /* Reset memory to zeros when loading a new program */
     memset(vm->memory, 0, MEMORY_SIZE * sizeof(int32_t));
-
     return VM_OK;
 }
 
@@ -221,48 +229,124 @@ static void execute_instruction(VM *vm) {
             break;
         }
 
-        /* ============================================
-         * MEMORY OPERATIONS (NEW IN DAY 3)
-         * ============================================ */
+        /* ---- JMP ---- */
+        case OP_JMP: {
+            int32_t address = read_int32(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+            if (address < 0 || address >= vm->code_size) {
+                vm->error = VM_ERROR_CODE_BOUNDS;
+                vm->running = false;
+                return;
+            }
+            vm->pc = address;
+            break;
+        }
 
-        /* ---- STORE: Pop value and store at memory[index] ---- */
+        /* ---- JZ ---- */
+        case OP_JZ: {
+            int32_t address = read_int32(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+            int32_t value = stack_pop(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+            if (value == 0) {
+                if (address < 0 || address >= vm->code_size) {
+                    vm->error = VM_ERROR_CODE_BOUNDS;
+                    vm->running = false;
+                    return;
+                }
+                vm->pc = address;
+            }
+            break;
+        }
+
+        /* ---- JNZ ---- */
+        case OP_JNZ: {
+            int32_t address = read_int32(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+            int32_t value = stack_pop(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+            if (value != 0) {
+                if (address < 0 || address >= vm->code_size) {
+                    vm->error = VM_ERROR_CODE_BOUNDS;
+                    vm->running = false;
+                    return;
+                }
+                vm->pc = address;
+            }
+            break;
+        }
+
+        /* ---- STORE ---- */
         case OP_STORE: {
-            /* Read the memory index from bytecode */
             int32_t index = read_int32(vm);
             if (vm->error != VM_OK) { vm->running = false; return; }
-
-            /* Check bounds */
             if (index < 0 || index >= MEMORY_SIZE) {
                 vm->error = VM_ERROR_MEMORY_BOUNDS;
                 vm->running = false;
                 return;
             }
-
-            /* Pop value from stack and store in memory */
             int32_t value = stack_pop(vm);
             if (vm->error != VM_OK) { vm->running = false; return; }
-
             vm->memory[index] = value;
             break;
         }
 
-        /* ---- LOAD: Push memory[index] onto stack ---- */
+        /* ---- LOAD ---- */
         case OP_LOAD: {
-            /* Read the memory index from bytecode */
             int32_t index = read_int32(vm);
             if (vm->error != VM_OK) { vm->running = false; return; }
-
-            /* Check bounds */
             if (index < 0 || index >= MEMORY_SIZE) {
                 vm->error = VM_ERROR_MEMORY_BOUNDS;
                 vm->running = false;
                 return;
             }
+            if (!stack_push(vm, vm->memory[index])) { vm->running = false; }
+            break;
+        }
 
-            /* Push value from memory onto stack */
-            if (!stack_push(vm, vm->memory[index])) {
+        /* ============================================
+         * FUNCTION CALLS (NEW IN DAY 5)
+         * ============================================ */
+
+        /* ---- CALL: Call a function ---- */
+        case OP_CALL: {
+            /* Read the function address */
+            int32_t address = read_int32(vm);
+            if (vm->error != VM_OK) { vm->running = false; return; }
+
+            /* Validate the target address */
+            if (address < 0 || address >= vm->code_size) {
+                vm->error = VM_ERROR_CODE_BOUNDS;
                 vm->running = false;
+                return;
             }
+
+            /*
+             * Save the return address on the return stack.
+             * The return address is where we are NOW (after reading the operand),
+             * which is where we want to continue after RET.
+             */
+            if (!return_stack_push(vm, vm->pc)) {
+                vm->running = false;
+                return;
+            }
+
+            /* Jump to the function */
+            vm->pc = address;
+            break;
+        }
+
+        /* ---- RET: Return from function ---- */
+        case OP_RET: {
+            /* Pop the return address from the return stack */
+            int32_t return_address = return_stack_pop(vm);
+            if (vm->error != VM_OK) {
+                vm->running = false;
+                return;
+            }
+
+            /* Jump back to the caller */
+            vm->pc = return_address;
             break;
         }
 
@@ -299,7 +383,7 @@ VMError vm_run(VM *vm) {
 void vm_dump_state(VM *vm) {
     printf("=== VM State ===\n");
     printf("PC: %d\n", vm->pc);
-    printf("SP: %d\n", vm->sp);
+    printf("SP: %d, RSP: %d\n", vm->sp, vm->rsp);
     printf("Running: %s\n", vm->running ? "yes" : "no");
     printf("Error: %s\n", vm_error_string(vm->error));
 
@@ -314,7 +398,13 @@ void vm_dump_state(VM *vm) {
         printf("Top of stack: %d\n", vm->stack[vm->sp - 1]);
     }
 
-    /* Show first few memory locations if they're non-zero */
+    printf("Return Stack: [");
+    for (int i = 0; i < vm->rsp; i++) {
+        printf("%d", vm->return_stack[i]);
+        if (i < vm->rsp - 1) printf(", ");
+    }
+    printf("]\n");
+
     printf("Memory: [");
     int shown = 0;
     for (int i = 0; i < MEMORY_SIZE && shown < 5; i++) {
