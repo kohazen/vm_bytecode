@@ -1,7 +1,4 @@
-# Makefile for Day 4 - Code Generator
-#
-# Compiles the complete assembler test program.
-
+# Makefile for VM Day 5
 CC = gcc
 CFLAGS = -Wall -Wextra -g -std=c99
 

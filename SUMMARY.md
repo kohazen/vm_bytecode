@@ -1,65 +1,56 @@
-# Day 4: Code Generator
+# Day 5: Function Calls
 
 ## What We Built Today
 
-Today we completed the assembler by adding the **code generator** - the final stage that takes parsed instructions and generates actual bytecode that the VM can execute.
+Today we added function call capabilities:
+1. **CALL** - Call a function (save where to return, jump to function)
+2. **RET** - Return from function (jump back to caller)
 
-We can now:
-1. Read assembly source code
-2. Tokenize it
-3. Parse it
-4. Resolve labels
-5. Generate bytecode
-6. Write it to a `.bc` file
+With functions, we can now write reusable code and even recursion!
 
 ---
 
 ## Key Concepts Explained
 
-### 1. What is Code Generation?
+### What is a Function Call?
 
-Code generation is the final phase of compilation/assembly. It takes the abstract representation (parsed instructions) and produces the concrete output (bytecode bytes).
+A function call does two things:
+1. **Jump** to the function's code
+2. **Remember** where to come back to
 
-**Input**: Parsed instructions with resolved addresses
-```
-Instruction { opcode=0x01, operand=42 }  // PUSH 42
-Instruction { opcode=0x10 }               // ADD
-```
+When the function finishes (RET), it:
+1. **Retrieves** the saved return address
+2. **Jumps** back to continue after the CALL
 
-**Output**: Raw bytes
-```
-01 2A 00 00 00 10
-```
+### The Return Stack
 
-### 2. The Bytecode File Format
-
-Our bytecode files have this structure:
+We use a **separate stack** for return addresses:
 
 ```
-+------------------------+
-| Header (12 bytes)      |
-|------------------------|
-| Magic:   0xCAFEBABE    |  4 bytes, little-endian
-| Version: 0x00000001    |  4 bytes, little-endian
-| Size:    N             |  4 bytes, little-endian
-+------------------------+
-| Code (N bytes)         |
-|------------------------|
-| opcode1 [operand1]     |
-| opcode2 [operand2]     |
-| ...                    |
-+------------------------+
+Data Stack:      For values and calculations
+Return Stack:    For return addresses only
 ```
 
-### 3. Little-Endian Encoding
+Why separate? If we mixed them, functions could corrupt return addresses!
 
-Multi-byte values are stored with the least significant byte first:
+```
+Return Stack visualization:
 
-**Value**: `0x12345678`
+After CALL:      [return_addr]    RSP = 1
+Nested CALL:     [addr1, addr2]   RSP = 2
+After RET:       [addr1]          RSP = 1
+After RET:       []               RSP = 0
+```
 
-**Little-endian**: `78 56 34 12`
+### CALL Instruction
 
-This matches x86/x64 processors and is what our VM expects.
+**Opcode**: 0x40
+**Format**: 1 byte opcode + 4 bytes address (5 bytes)
+
+**What it does**:
+1. Read the function address from bytecode
+2. Push current PC onto return stack (this is where to return)
+3. Set PC = function address (jump to function)
 
 ```c
 // Write a 32-bit value in little-endian
@@ -68,122 +59,157 @@ bytes[1] = (value >> 8) & 0xFF;
 bytes[2] = (value >> 16) & 0xFF;
 bytes[3] = (value >> 24) & 0xFF; // Most significant
 ```
+Before CALL 100:
+    PC = 10 (at the CALL instruction)
+    Return Stack: []
 
-### 4. Instruction Encoding
-
-Each instruction becomes 1 or 5 bytes:
-
-**No operand** (1 byte):
-```
-ADD → 10
-```
-
-**With operand** (5 bytes):
-```
-PUSH 42 → 01 2A 00 00 00
-           │  └──────────── 42 in little-endian (0x0000002A)
-           └─────────────── opcode for PUSH
+After CALL 100:
+    PC = 100 (at the function)
+    Return Stack: [15]  (return to address after CALL, which is PC after reading operand)
 ```
 
-### 5. Binary File I/O
+### RET Instruction
 
-Writing binary files in C:
+**Opcode**: 0x41
+**Format**: 1 byte (no operand)
 
-```c
-// Open in binary write mode
-FILE *file = fopen("output.bc", "wb");
+**What it does**:
+1. Pop the return address from return stack
+2. Set PC = return address (jump back to caller)
 
-// Write raw bytes
-uint8_t data[] = {0x01, 0x02, 0x03};
-fwrite(data, 1, 3, file);
-
-// Always close
-fclose(file);
 ```
+Before RET:
+    PC = 105 (somewhere in function)
+    Return Stack: [15]
 
-The `"wb"` mode is crucial:
-- `w` = write (create/overwrite)
-- `b` = binary (don't translate line endings)
+After RET:
+    PC = 15 (back in main code)
+    Return Stack: []
+```
 
 ---
 
 ## How the Code Works
 
-### Generating Bytecode
+### CALL Implementation
 
 ```c
-bool codegen_generate(CodeGenerator *gen, ParsedInstruction *instructions,
-                      int instruction_count) {
-    for (each instruction) {
-        // Emit the opcode
-        emit_byte(gen, inst->opcode);
+case OP_CALL: {
+    /* Read the function address */
+    int32_t address = read_int32(vm);
+    if (vm->error != VM_OK) { vm->running = false; return; }
 
-        // Emit operand if present
-        if (inst->has_operand) {
-            emit_int32(gen, inst->operand);
-        }
+    /* Validate the target address */
+    if (address < 0 || address >= vm->code_size) {
+        vm->error = VM_ERROR_CODE_BOUNDS;
+        vm->running = false;
+        return;
     }
+
+    /*
+     * Save the return address on the return stack.
+     * vm->pc is now pointing to the instruction AFTER the CALL,
+     * which is exactly where we want to return to.
+     */
+    if (!return_stack_push(vm, vm->pc)) {
+        vm->running = false;
+        return;
+    }
+
+    /* Jump to the function */
+    vm->pc = address;
+    break;
 }
 ```
 
-### Emitting Little-Endian Values
+### RET Implementation
 
 ```c
-static bool emit_int32(CodeGenerator *gen, int32_t value) {
-    emit_byte(gen, value & 0xFF);
-    emit_byte(gen, (value >> 8) & 0xFF);
-    emit_byte(gen, (value >> 16) & 0xFF);
-    emit_byte(gen, (value >> 24) & 0xFF);
+case OP_RET: {
+    /* Pop the return address from the return stack */
+    int32_t return_address = return_stack_pop(vm);
+    if (vm->error != VM_OK) {
+        vm->running = false;
+        return;
+    }
+
+    /* Jump back to the caller */
+    vm->pc = return_address;
+    break;
 }
 ```
 
-### Writing the File
+### Return Stack Operations
 
 ```c
-bool codegen_write_file(CodeGenerator *gen, const char *filename) {
-    FILE *file = fopen(filename, "wb");
+static bool return_stack_push(VM *vm, int32_t value) {
+    if (vm->rsp >= RETURN_STACK_SIZE) {
+        vm->error = VM_ERROR_RETURN_STACK_OVERFLOW;
+        return false;
+    }
+    vm->return_stack[vm->rsp] = value;
+    vm->rsp++;
+    return true;
+}
 
-    // Write header
-    write_uint32(file, BYTECODE_MAGIC);    // 0xCAFEBABE
-    write_uint32(file, BYTECODE_VERSION);  // 0x00000001
-    write_uint32(file, gen->bytecode_size);
-
-    // Write code
-    fwrite(gen->bytecode, 1, gen->bytecode_size, file);
-
-    fclose(file);
+static int32_t return_stack_pop(VM *vm) {
+    if (vm->rsp <= 0) {
+        vm->error = VM_ERROR_RETURN_STACK_UNDERFLOW;
+        return 0;
+    }
+    vm->rsp--;
+    return vm->return_stack[vm->rsp];
 }
 ```
 
 ---
 
-## How to Test
+## Function Examples
 
-### Compile
-```bash
-make clean
-make
+### Example 1: Square Function
+
+```assembly
+; Main program
+PUSH 5
+CALL square
+HALT
+
+; square(x) = x * x
+square:
+    DUP         ; Duplicate x: [x, x]
+    MUL         ; Multiply: [x*x]
+    RET         ; Return with result on stack
 ```
 
-### Run Tests (generates bytecode files)
-```bash
-./asm_test
+**Execution trace**:
+```
+1. PUSH 5       Stack: [5]          RetStack: []
+2. CALL square  Stack: [5]          RetStack: [10]  (10 = address after CALL)
+3. DUP          Stack: [5, 5]       RetStack: [10]
+4. MUL          Stack: [25]         RetStack: [10]
+5. RET          Stack: [25]         RetStack: []    (PC = 10)
+6. HALT         Stack: [25]         Done!
 ```
 
-### View Generated Files
-```bash
-hexdump -C test_add.bc
-```
+### Example 2: Nested Calls
 
-### Run on VM (if available)
-```bash
-../../student1/day7/vm test_add.bc
-```
+```assembly
+; main: compute x + square(x) where x=3
+PUSH 3
+CALL f
+HALT
 
----
+; f(x) = x + square(x)
+f:
+    DUP         ; [3, 3]
+    CALL square ; [3, 9]
+    ADD         ; [12]
+    RET
 
-## Expected Output
-
+square:
+    DUP
+    MUL
+    RET
 ```
 ========================================
   Assembler Code Generator - Day 4 Tests
@@ -243,42 +269,71 @@ Bytecode (hex dump):
 00000010: 00 01 02 00  00 00 10 FF                            ........
 ```
 
-Breakdown:
+After resolution:
+- `JNZ loop` becomes `JNZ 10`
+
+**Return stack during nested call**:
 ```
-BE BA FE CA     Magic number (0xCAFEBABE in little-endian)
-01 00 00 00     Version (1)
-0C 00 00 00     Code size (12 bytes)
-01 28 00 00 00  PUSH 40 (opcode 0x01, operand 40 = 0x28)
-01 02 00 00 00  PUSH 2  (opcode 0x01, operand 2)
-10              ADD     (opcode 0x10)
-FF              HALT    (opcode 0xFF)
+Before any call:     []
+After CALL f:        [5]      (main's return)
+After CALL square:   [5, 17]  (main's return, f's return)
+After RET (square):  [5]
+After RET (f):       []
+```
+
+### Example 3: Double Function
+
+```assembly
+; double(x) = x + x
+PUSH 21
+CALL double
+HALT
+
+double:
+    DUP         ; [21, 21]
+    ADD         ; [42]
+    RET
 ```
 
 ---
 
-## The Complete Assembly Pipeline
+## Passing Parameters
+
+Our VM uses **stack-based parameter passing**:
+- Push parameters BEFORE calling
+- Function reads them from the stack
+- Return value stays on the stack
 
 ```
-Source Code (.asm)
-       │
-       ▼
-   [Lexer]  ──────────────►  Tokens
-       │
-       ▼
-   [Parser] ──────────────►  Parsed Instructions
-       │
-       ▼
-[Label Collector] ────────►  Symbol Table
-       │
-       ▼
-[Label Resolver] ─────────►  Resolved Instructions
-       │
-       ▼
-[Code Generator] ─────────►  Bytecode
-       │
-       ▼
-[File Writer] ────────────►  .bc File
+; add(a, b) - adds two numbers
+PUSH 10     ; First argument
+PUSH 20     ; Second argument
+CALL add    ; Call with both on stack
+; Result (30) is now on stack
+
+add:
+    ADD     ; Pops both, pushes sum
+    RET
 ```
+
+This is simpler than having local variables, but works for our needs!
+
+---
+
+## Error Handling
+
+### RET Without CALL
+
+If you RET without a matching CALL, the return stack is empty:
+
+```assembly
+PUSH 42
+RET         ; ERROR: Return stack underflow!
+```
+
+### Too Many Nested Calls
+
+With RETURN_STACK_SIZE = 256, you can nest up to 256 function calls. More than that causes return stack overflow.
 
 ---
 
@@ -289,8 +344,9 @@ Source Code (.asm)
 // WRONG - text mode, might corrupt on Windows
 FILE *file = fopen(filename, "w");
 
-// CORRECT - binary mode
-FILE *file = fopen(filename, "wb");
+```bash
+cd student1/day5
+make
 ```
 
 ### 2. Wrong Byte Order
@@ -302,56 +358,80 @@ bytes[0] = (value >> 24) & 0xFF;
 bytes[0] = value & 0xFF;
 ```
 
-### 3. Not Checking Write Errors
-```c
-// WRONG - assumes write succeeds
-fwrite(data, 1, size, file);
+### Expected Output
 
-// CORRECT - check return value
-if (fwrite(data, 1, size, file) != size) {
-    // Handle error
-}
-```
+7 tests covering:
+1. Simple function call
+2. Function with parameter (square)
+3. Multiple calls
+4. Nested calls
+5. Deep nesting (3 levels)
+6. RET without CALL (error)
+7. Double function
 
-### 4. Unresolved Labels
-The code generator should never see unresolved label references. If it does, something went wrong in an earlier stage:
-```c
-if (inst->is_label_ref) {
-    // This is a bug - labels should be resolved already
-    error("Unresolved label");
-}
-```
+All tests should pass!
 
 ---
 
-## What's Next?
+## Common Mistakes
 
-Tomorrow (Day 5) we'll:
-1. Add proper error handling throughout
-2. Create a command-line interface (CLI)
-3. Make the assembler a proper standalone tool
+### 1. Wrong Return Address
+
+CALL saves the address of the instruction AFTER the CALL, not the CALL itself.
+
+```
+Address 5: CALL function  (5 bytes)
+Address 10: HALT
+
+Return address = 10 (not 5!)
+```
+
+### 2. Forgetting RET
+
+If a function doesn't RET, execution continues into whatever code follows:
+
+```assembly
+function:
+    PUSH 42
+    ; Forgot RET!
+    ; Falls through to next code...
+```
+
+### 3. Stack Imbalance
+
+If a function pops more than it should, it corrupts the caller's data:
+
+```assembly
+bad_function:
+    POP         ; Pops caller's data!
+    POP         ; More corruption!
+    RET
+```
+
+### 4. Mixing Up Stacks
+
+Return addresses go on return stack, not data stack!
 
 ---
 
 ## Files in This Day
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `instructions.h` | ~60 | Opcode definitions |
-| `lexer.h/.c` | ~270 | Tokenization |
-| `parser.h/.c` | ~250 | Parsing |
-| `labels.h/.c` | ~190 | Label resolution |
-| `codegen.h` | ~45 | Code generator interface |
-| `codegen.c` | ~120 | Code generation |
-| `main.c` | ~140 | Test program |
-| `Makefile` | ~45 | Build configuration |
+| File | Purpose |
+|------|---------|
+| `instructions.h` | Same opcode definitions |
+| `vm.h` | Same VM structure |
+| `vm.c` | VM with function calls added |
+| `main.c` | Tests for CALL and RET |
+| `Makefile` | Build instructions |
+| `SUMMARY.md` | This explanation file |
 
 ---
 
-## Key Takeaways
+## What's Next (Day 6)
 
-1. **Code generation is the final step** - turns abstract representation into bytes
-2. **Little-endian matters** - must match what the VM expects
-3. **File format includes header** - magic number, version, size
-4. **Binary mode is essential** - prevents line ending translation
-5. **Always verify output** - use hexdump to check generated files
+Tomorrow we'll add the bytecode loader:
+- Read bytecode from a file
+- Validate the file format (magic number, version)
+- Load the code into the VM
+
+This will let us run programs from files instead of hardcoded arrays!
