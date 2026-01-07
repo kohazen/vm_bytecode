@@ -3,10 +3,10 @@ CC = gcc
 CFLAGS = -Wall -Wextra -g -std=c99
 
 # Object files
-OBJECTS = main.o lexer.o parser.o labels.o codegen.o
+OBJECTS = main.o lexer.o parser.o labels.o codegen.o assembler.o
 
 # Executable
-TARGET = asm_test
+TARGET = asm
 
 # Default target
 all: $(TARGET)
@@ -16,8 +16,12 @@ $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
 
 # Compile main.c
-main.o: main.c lexer.h parser.h labels.h codegen.h
+main.o: main.c assembler.h
 	$(CC) $(CFLAGS) -c main.c
+
+# Compile assembler.c
+assembler.o: assembler.c assembler.h lexer.h parser.h labels.h codegen.h
+	$(CC) $(CFLAGS) -c assembler.c
 
 # Compile lexer.c
 lexer.o: lexer.c lexer.h
@@ -39,8 +43,17 @@ codegen.o: codegen.c codegen.h parser.h
 clean:
 	rm -f $(OBJECTS) $(TARGET) *.bc
 
-# Run tests
-test: $(TARGET)
-	./$(TARGET)
+# Help
+help:
+	@echo "Assembler Makefile"
+	@echo ""
+	@echo "Targets:"
+	@echo "  make          - Build the assembler"
+	@echo "  make clean    - Remove compiled files"
+	@echo "  make help     - Show this help message"
+	@echo ""
+	@echo "Usage after building:"
+	@echo "  ./asm program.asm           - Assemble to program.bc"
+	@echo "  ./asm program.asm -o out.bc - Assemble to out.bc"
 
-.PHONY: all clean test
+.PHONY: all clean help

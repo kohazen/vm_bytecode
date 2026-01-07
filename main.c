@@ -7,10 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "lexer.h"
-#include "parser.h"
-#include "labels.h"
-#include "codegen.h"
+#include "assembler.h"
 
 /*
  * Test 1: Simple function call
@@ -91,6 +88,7 @@ void test_function_with_param(void) {
     } else {
         printf("TEST FAILED!\n");
     }
+}
 
     vm_destroy(vm);
 }
