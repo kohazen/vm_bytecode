@@ -1,0 +1,5 @@
+JMP skip
+PUSH 100
+skip:
+PUSH 200
+HALT

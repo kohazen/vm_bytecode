@@ -1,0 +1,27 @@
+; calls function 1000 times
+
+PUSH 0
+STORE 0
+
+PUSH 1000
+STORE 1
+
+loop:
+LOAD 0
+CALL add_two
+STORE 0
+
+LOAD 1
+PUSH 1
+SUB
+DUP
+STORE 1
+JNZ loop
+
+LOAD 0
+HALT
+
+add_two:
+PUSH 2
+ADD
+RET

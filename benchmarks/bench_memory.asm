@@ -1,0 +1,32 @@
+; performs 1000 store/load pairs
+
+PUSH 1000
+STORE 0
+
+loop:
+LOAD 0
+
+DUP
+PUSH 10
+DIV
+PUSH 10
+MUL
+SUB
+PUSH 1
+ADD
+
+POP
+LOAD 0
+STORE 1
+LOAD 1
+POP
+
+LOAD 0
+PUSH 1
+SUB
+DUP
+STORE 0
+JNZ loop
+
+LOAD 1
+HALT

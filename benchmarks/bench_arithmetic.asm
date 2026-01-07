@@ -1,0 +1,32 @@
+; performs 1000 arithmetic operations
+
+PUSH 0
+STORE 0
+
+PUSH 1000
+STORE 1
+
+loop:
+PUSH 100
+PUSH 50
+ADD
+PUSH 25
+SUB
+PUSH 2
+MUL
+PUSH 5
+DIV
+POP
+
+LOAD 0
+PUSH 1
+ADD
+DUP
+STORE 0
+
+LOAD 1
+CMP
+JNZ loop
+
+LOAD 0
+HALT
