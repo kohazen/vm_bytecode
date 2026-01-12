@@ -1,0 +1,15 @@
+# Makefile Changes for Day 1 - Student A
+
+# Add gc.c to the VM build
+
+# Original VM build:
+# vm/vm: vm/vm.c vm/vm.h vm/bytecode_loader.c vm/bytecode_loader.h vm/main.c
+# 	$(CC) $(CFLAGS) -o vm/vm vm/main.c vm/vm.c vm/bytecode_loader.c
+
+# Modified VM build (add gc.c and gc.h):
+vm/vm: vm/vm.c vm/vm.h vm/gc.c vm/gc.h vm/bytecode_loader.c vm/bytecode_loader.h vm/main.c
+	$(CC) $(CFLAGS) -o vm/vm vm/main.c vm/vm.c vm/gc.c vm/bytecode_loader.c
+
+# Note: Make sure gc.h is in the same directory as vm.h
+# The vm.h file now includes the forward declaration for Object
+# The gc.h file includes the full Object structure definition

@@ -3,10 +3,12 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "gc.h"  /* For Object and Value types */
 
 #define STACK_SIZE        1024
 #define MEMORY_SIZE       256
 #define RETURN_STACK_SIZE 256
+#define VM_STACK_MAX      256
 
 typedef enum {
     VM_OK = 0,
@@ -21,7 +23,8 @@ typedef enum {
     VM_ERROR_FILE_IO
 } VMError;
 
-typedef struct {
+typedef struct VM {
+    /* Original VM fields */
     int32_t *stack;
     int sp;
     int32_t *memory;
@@ -32,6 +35,14 @@ typedef struct {
     int rsp;
     bool running;
     VMError error;
+
+    /* GC-related fields (Lab 5) */
+    Object *first_object;
+    int num_objects;
+    int max_objects;
+    Value *value_stack;
+    int stack_count;
+    bool auto_gc;  /* Enable/disable automatic GC triggering */
 } VM;
 
 VM* vm_create(void);
